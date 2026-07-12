@@ -152,9 +152,12 @@
         margin-top: 12px;
         min-height: 20px;
       }
+      /* bottom cluster (memo above the keypad, then the action button) */
+      .bottom {
+        margin-top: auto;
+      }
       /* keypad */
       .keypad {
-        margin-top: auto;
         padding: 8px 12px 12px;
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -179,7 +182,7 @@
       }
       /* memo */
       .memo-wrap {
-        padding: 0 16px;
+        padding: 4px 16px 8px;
       }
       .memo {
         width: 100%;
@@ -407,21 +410,23 @@
         <div id="hint" class="hint"></div>
       </div>
 
-      <div class="keypad" id="keypad"></div>
+      <div class="bottom">
+        <div id="memoWrap" class="memo-wrap">
+          <input
+            id="memo"
+            class="memo"
+            type="text"
+            maxlength="200"
+            placeholder="メモ(任意)"
+            autocomplete="off"
+          />
+        </div>
 
-      <div id="memoWrap" class="memo-wrap">
-        <input
-          id="memo"
-          class="memo"
-          type="text"
-          maxlength="200"
-          placeholder="メモ(任意)"
-          autocomplete="off"
-        />
-      </div>
+        <div class="keypad" id="keypad"></div>
 
-      <div class="action">
-        <button id="go" onclick="start()">支払う</button>
+        <div class="action">
+          <button id="go" onclick="start()">支払う</button>
+        </div>
       </div>
     </div>
 
