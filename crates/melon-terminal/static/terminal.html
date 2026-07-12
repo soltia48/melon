@@ -349,7 +349,10 @@
     <div id="app">
       <header class="topbar">
         <div class="brand"><span class="dot"></span> Melon 端末</div>
-        <button class="infobtn" onclick="openInfo()">ⓘ 加盟店情報</button>
+        <div style="display: flex; gap: 8px">
+          <button class="infobtn" onclick="openSettings(false)">⚙ 設定</button>
+          <button class="infobtn" onclick="openInfo()">ⓘ 加盟店情報</button>
+        </div>
       </header>
 
       <div class="tabs" id="tabs">
@@ -378,6 +381,9 @@
     </div>
     <div class="overlay" id="infoOverlay">
       <div class="sheet" id="infoSheet"></div>
+    </div>
+    <div class="overlay" id="settingsOverlay">
+      <div class="sheet" id="settingsSheet"></div>
     </div>
 
     <script>
@@ -528,6 +534,10 @@
 
       // ---- run an operation ----
       async function start() {
+        if (!configured) {
+          openSettings(false);
+          return;
+        }
         unlockAudio(); // this call is a user gesture; primes audio for the result sound
         played = false;
         try {
@@ -776,6 +786,11 @@
               title: "端末の設定エラー",
               sub: "API キーを確認してください",
             };
+          case "NOT_CONFIGURED":
+            return {
+              title: "端末が未設定です",
+              sub: "「⚙ 設定」から API キーを入力してください",
+            };
           case "NETWORK":
           case "NETWORK_LOCAL":
             return {
@@ -879,11 +894,105 @@
     <div class="btns"><button class="btn-primary" onclick="closeInfo()">閉じる</button></div>`;
       }
 
+      // ---- settings (API キー設定) ----
+      // The key lives only in the terminal process; this screen sets it and the
+      // server never sends it back (GET /config only reports whether one is set).
+      let configured = false;
+      let settingsRequired = false;
+
+      function settingsHtml(errorMsg) {
+        return `<h2>端末の設定</h2>
+    <p class="sub">${settingsRequired ? "この端末はまだ設定されていません。" : ""}加盟店の API キーを入力してください。</p>
+    <div style="margin:18px 0;text-align:left">
+      <label class="muted" style="font-size:13px">API キー</label>
+      <input id="apiKeyInput" type="password" autocomplete="off" placeholder="加盟店 API キー"
+        style="width:100%;font-size:18px;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--ink);margin-top:6px">
+      ${
+        errorMsg
+          ? `<p style="color:var(--danger);font-size:13px;margin-top:8px">${esc(errorMsg)}</p>`
+          : `<p class="muted" style="font-size:12px;margin-top:8px">キーは端末内にのみ保存され、画面には表示されません。</p>`
+      }
+    </div>
+    <div class="btns">
+      ${settingsRequired ? "" : `<button class="btn-ghost" onclick="closeSettings()">閉じる</button>`}
+      <button class="btn-primary" onclick="saveConfig()">保存</button>
+    </div>`;
+      }
+      const focusApiKey = () =>
+        setTimeout(() => $("apiKeyInput") && $("apiKeyInput").focus(), 50);
+
+      // On boot, ask the terminal whether a key is set; if not, force the setup.
+      async function checkConfig() {
+        try {
+          const j = await (await fetch("/config")).json();
+          configured = !!j.configured;
+        } catch {
+          configured = false;
+        }
+        if (!configured) openSettings(true);
+      }
+      function openSettings(required) {
+        settingsRequired = !!required;
+        $("settingsSheet").innerHTML = settingsHtml(null);
+        $("settingsOverlay").classList.add("show");
+        focusApiKey();
+      }
+      function closeSettings() {
+        if (settingsRequired) return; // must configure before use
+        $("settingsOverlay").classList.remove("show");
+      }
+      async function saveConfig() {
+        const input = $("apiKeyInput");
+        const key = input ? input.value.trim() : "";
+        if (!key) {
+          $("settingsSheet").innerHTML =
+            settingsHtml("API キーを入力してください");
+          focusApiKey();
+          return;
+        }
+        $("settingsSheet").innerHTML =
+          `<div class="spinner"></div><h2>確認中…</h2>`;
+        try {
+          const res = await fetch("/config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ api_key: key }),
+          });
+          const j = await res.json().catch(() => ({}));
+          if (!res.ok || !j.configured) {
+            $("settingsSheet").innerHTML = settingsHtml(
+              j.error || "HTTP " + res.status,
+            );
+            focusApiKey();
+            return;
+          }
+          configured = true;
+          settingsRequired = false;
+          $("settingsOverlay").classList.remove("show");
+        } catch (e) {
+          $("settingsSheet").innerHTML = settingsHtml(
+            "端末に接続できません: " + e.message,
+          );
+          focusApiKey();
+        }
+      }
+
       // ---- physical keyboard ----
       // Mirror the on-screen keypad: digits type the amount, Backspace deletes, Enter
       // runs the operation, Escape clears (or cancels/closes while the overlay is up).
       function handleKeydown(e) {
         if (e.metaKey || e.ctrlKey || e.altKey) return;
+        if ($("settingsOverlay").classList.contains("show")) {
+          // Enter saves; Escape closes (only when the key is already configured).
+          if (e.key === "Enter") {
+            e.preventDefault();
+            saveConfig();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            closeSettings();
+          }
+          return; // let all other keys reach the API-key field
+        }
         if ($("infoOverlay").classList.contains("show")) {
           if (e.key === "Escape" || e.key === "Enter") {
             e.preventDefault();
@@ -926,6 +1035,7 @@
       buildKeypad();
       setOp("pay");
       document.addEventListener("keydown", handleKeydown);
+      checkConfig(); // prompt for the API key if the terminal isn't configured yet
     </script>
   </body>
 </html>

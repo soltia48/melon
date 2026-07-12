@@ -30,7 +30,7 @@ Melon は「**オンライン前払式支払手段**」です。残高は **Post
 | **melon-db** | PostgreSQL 永続化(sqlx)。マイグレーション、口座・加盟店・金銭操作(top_up/pay/refund/void/adjust/sweep/report)、二重支払い防止 | sqlx, melon-core, time |
 | **melon-auth** | FeliCa 暗号オラクル(`felica-auth-server` を rusb なしで取り込み)。鍵ストア、相互認証セッション、リレードライバ | felica-rs(`default-features=false`), axum, flume |
 | **melon-server** | axum HTTP サーバ(純粋な JSON API)。相互認証 + 決済 API + 加盟店/管理 API + 失効スイープを統合。フロントエンドは別アプリ(`web/`) | melon-core/db/auth, axum, sqlx, sha2 |
-| **melon-terminal** | 加盟店端末(lib+bin)。PaSoRi を駆動しフレームを中継。CLI 一発実行と `serve`(ローカル Web UI キオスク)の 2 モード | felica-rs(`features=["usb"]`), reqwest, tiny_http |
+| **melon-terminal** | 加盟店端末(lib+bin)。PaSoRi を駆動しフレームを中継。既定は Web UI キオスク、`--op`/`--amount` 指定で CLI 一発実行の 2 モード | felica-rs(`features=["usb"]`), reqwest, tiny_http |
 
 ### レイヤリング
 

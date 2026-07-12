@@ -27,6 +27,10 @@ anyhow = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 # Lightweight blocking HTTP server for `serve` (local Web UI kiosk). No tokio.
 tiny_http = "0.12"
+# Open the kiosk UI in the operator's default browser on startup.
+open = "5"
+# Platform config directory, to persist the kiosk's merchant API key.
+dirs = "6"
 # Console diagnostics: the card/relay/HTTP flow is logged to stderr (RUST_LOG / -v).
 tracing.workspace = true
 tracing-subscriber.workspace = true
