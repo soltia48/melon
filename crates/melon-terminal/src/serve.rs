@@ -10,7 +10,7 @@
 //! only enqueues jobs and reports status, so it never blocks on a card tap.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -124,12 +124,22 @@ struct Creds {
     system_codes: Vec<u16>,
 }
 
+/// How long to wait before retrying to open a missing reader.
+const READER_RETRY: Duration = Duration::from_secs(2);
+/// While idle holding a reader, re-verify it's still connected this often. Detects
+/// an unplug by dropping and reopening the device — the only reliable check here,
+/// so keep it infrequent to avoid needless USB open/close churn.
+const READER_PROBE: Duration = Duration::from_secs(15);
+
 /// Shared handles the HTTP loop and the reader worker both hold.
 #[derive(Clone)]
 struct Shared {
     status: Arc<Mutex<Status>>,
     cancel: Arc<AtomicBool>,
     jobs: Sender<Job>,
+    /// Whether a card reader is currently connected (kept up to date by the reader
+    /// worker). The kiosk serves even when it is `false`; the UI shows a warning.
+    reader_present: Arc<AtomicBool>,
     /// Immutable connection settings.
     server: String,
     poll_interval: Duration,
@@ -237,6 +247,10 @@ impl Shared {
 /// validated now (fail-soft — a bad key just leaves the kiosk unconfigured, and
 /// the screen can fix it). When `open_browser` is set, the UI is opened in the
 /// operator's default browser once the server is up.
+///
+/// The kiosk also starts even when NO card reader is connected: the reader worker
+/// keeps trying to acquire one in the background and the UI shows a warning until
+/// it succeeds. So neither a missing key nor a missing reader is fatal here.
 pub fn run(
     server_url: String,
     initial_api_key: Option<String>,
@@ -246,6 +260,7 @@ pub fn run(
 ) -> Result<()> {
     let status = Arc::new(Mutex::new(Status::idle("待機中")));
     let cancel = Arc::new(AtomicBool::new(false));
+    let reader_present = Arc::new(AtomicBool::new(false));
     let http = crate::http_client();
     let creds = Arc::new(Mutex::new(Creds {
         api_key: None,
@@ -269,7 +284,6 @@ pub fn run(
     }
 
     let (jobs_tx, jobs_rx) = channel::<Job>();
-    let (ready_tx, ready_rx) = channel::<Result<(), String>>();
 
     {
         let worker_server = server_url.clone();
@@ -277,6 +291,7 @@ pub fn run(
         let worker_http = http.clone();
         let worker_status = status.clone();
         let worker_cancel = cancel.clone();
+        let worker_present = reader_present.clone();
         thread::Builder::new()
             .name("reader".into())
             .spawn(move || {
@@ -288,23 +303,17 @@ pub fn run(
                     jobs_rx,
                     worker_status,
                     worker_cancel,
-                    ready_tx,
+                    worker_present,
                 )
             })
             .map_err(|e| anyhow!("failed to spawn reader worker: {e}"))?;
-    }
-
-    // Fail fast (like the CLI) if the reader can't be opened.
-    match ready_rx.recv() {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => return Err(anyhow!(e)),
-        Err(_) => return Err(anyhow!("reader worker exited before it was ready")),
     }
 
     let shared = Shared {
         status,
         cancel,
         jobs: jobs_tx,
+        reader_present,
         server: server_url,
         poll_interval,
         creds,
@@ -334,7 +343,9 @@ pub fn run(
     Ok(())
 }
 
-/// The reader worker: owns the PaSoRi and runs one job at a time.
+/// The reader worker: acquires the PaSoRi (retrying if none is connected), keeps
+/// `reader_present` up to date, and runs one job at a time. Never fails fatally on
+/// a missing reader — the kiosk keeps serving and the UI shows a warning.
 #[allow(clippy::too_many_arguments)]
 fn worker(
     server: String,
@@ -344,25 +355,57 @@ fn worker(
     jobs: Receiver<Job>,
     status: Arc<Mutex<Status>>,
     cancel: Arc<AtomicBool>,
-    ready: Sender<Result<(), String>>,
+    reader_present: Arc<AtomicBool>,
 ) {
-    let mut reader = match crate::open_reader_auto() {
-        Ok(r) => r,
-        Err(e) => {
-            let _ = ready.send(Err(e.to_string()));
-            return;
-        }
-    };
-    let target = match crate::make_target() {
-        Ok(t) => t,
-        Err(e) => {
-            let _ = ready.send(Err(e.to_string()));
-            return;
-        }
-    };
-    let _ = ready.send(Ok(()));
+    // Acquired lazily and re-acquired if lost. A wildcard poll can't tell "no
+    // card" from "no reader" (both look like no response), so the only reliable
+    // presence check is whether the device can be opened.
+    let mut reader: Option<(felica_rs::prelude::Reader, felica_rs::prelude::RemoteTarget)> = None;
 
-    for job in jobs {
+    loop {
+        // (Re)acquire the reader if we don't hold one.
+        if reader.is_none() {
+            match crate::open_reader_quiet().and_then(|r| crate::make_target().map(|t| (r, t))) {
+                Ok(rt) => {
+                    reader = Some(rt);
+                    if !reader_present.swap(true, Ordering::SeqCst) {
+                        tracing::info!("card reader connected");
+                        // Clear a lingering "no reader" screen back to idle.
+                        set(&status, |s| {
+                            if s.error_code.as_deref() == Some("NO_READER") {
+                                *s = Status::idle("待機中");
+                            }
+                        });
+                    }
+                }
+                Err(e) => {
+                    if reader_present.swap(false, Ordering::SeqCst) {
+                        tracing::warn!(error = %e, "card reader disconnected");
+                    } else {
+                        tracing::debug!(error = %e, "card reader not available; retrying");
+                    }
+                    // Reject any queued job; otherwise pause before retrying the open.
+                    match jobs.recv_timeout(READER_RETRY) {
+                        Ok(_) => set(&status, no_reader),
+                        Err(RecvTimeoutError::Timeout) => {}
+                        Err(RecvTimeoutError::Disconnected) => return,
+                    }
+                    continue;
+                }
+            }
+        }
+
+        // Hold a reader: wait for a job, but wake periodically to re-verify the
+        // reader is still connected (dropping + reopening reveals an unplug).
+        let job = match jobs.recv_timeout(READER_PROBE) {
+            Ok(job) => job,
+            Err(RecvTimeoutError::Timeout) => {
+                reader = None; // reopen next iteration → refreshes reader_present
+                continue;
+            }
+            Err(RecvTimeoutError::Disconnected) => return,
+        };
+
         cancel.store(false, Ordering::SeqCst);
         // Snapshot the credentials for this job — the operator can set/replace the
         // API key between jobs from the settings screen.
@@ -377,12 +420,14 @@ fn worker(
             });
             continue;
         };
+
+        let rt = reader.as_mut().expect("reader is held here");
         match job {
             Job::Operate { op, amount } => {
                 tracing::info!(job = "operate", op = %op, amount, "kiosk job started");
                 let Some((_sc, session_id, account_id)) = wait_and_auth(
-                    &mut reader,
-                    &target,
+                    &mut rt.0,
+                    &rt.1,
                     &http,
                     &cfg,
                     &cancel,
@@ -409,14 +454,7 @@ fn worker(
             Job::RefundLookup => {
                 tracing::info!(job = "refund-lookup", "kiosk job started");
                 let Some((_sc, _session, account_id)) = wait_and_auth(
-                    &mut reader,
-                    &target,
-                    &http,
-                    &cfg,
-                    &cancel,
-                    &status,
-                    "refund",
-                    None,
+                    &mut rt.0, &rt.1, &http, &cfg, &cancel, &status, "refund", None,
                 ) else {
                     continue;
                 };
@@ -542,6 +580,17 @@ fn fail(s: &mut Status, err: &anyhow::Error) {
     s.result = None;
 }
 
+/// Reject a job that arrived while no card reader is connected.
+fn no_reader(s: &mut Status) {
+    s.phase = "error";
+    s.op = None;
+    s.message = "エラー".into();
+    s.error_code = Some("NO_READER".into());
+    s.error_details = None;
+    s.error = Some("カードリーダが接続されていません".into());
+    s.result = None;
+}
+
 /// Map an operation/auth failure to a stable error code the UI localizes on.
 /// A server error carries its own `code` and `details`; hardware/network failures
 /// are recognized heuristically from the message.
@@ -592,8 +641,9 @@ fn set(status: &Arc<Mutex<Status>>, f: impl FnOnce(&mut Status)) {
 fn handle(mut request: Request, shared: &Shared) {
     let method = request.method().clone();
     let path = request.url().split('?').next().unwrap_or("").to_string();
-    // /status is polled every 400ms by the UI — keep it at trace, the rest at debug.
-    if path == "/status" {
+    // /status and /reader are polled frequently by the UI — keep them at trace,
+    // the rest at debug.
+    if path == "/status" || path == "/reader" {
         tracing::trace!(method = %method, %path, "kiosk UI request");
     } else {
         tracing::debug!(method = %method, %path, "kiosk UI request");
@@ -604,12 +654,27 @@ fn handle(mut request: Request, shared: &Shared) {
             respond_html(request, INDEX_HTML);
         }
         (Method::Get, "/status") => {
-            let body = shared
+            let mut body = shared
                 .status
                 .lock()
                 .map(|s| s.to_json())
                 .unwrap_or(Value::Null);
+            // Surface reader presence alongside the job status.
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert(
+                    "reader_connected".into(),
+                    json!(shared.reader_present.load(Ordering::SeqCst)),
+                );
+            }
             respond_json(request, 200, body);
+        }
+        (Method::Get, "/reader") => {
+            // Cheap endpoint the UI polls continuously to show a "no reader" warning.
+            respond_json(
+                request,
+                200,
+                json!({ "connected": shared.reader_present.load(Ordering::SeqCst) }),
+            );
         }
         (Method::Get, "/config") => {
             // Only ever expose WHETHER a key is set — never the key itself.
@@ -694,6 +759,9 @@ fn start_operate(shared: &Shared, op: Op, amount: Option<i64>) -> (u16, Value) {
     if !shared.configured() {
         return (409, json!({ "error": "API キーが設定されていません" }));
     }
+    if !shared.reader_present.load(Ordering::SeqCst) {
+        return (409, json!({ "error": "カードリーダが接続されていません" }));
+    }
     if op.is_spend() && !matches!(amount, Some(a) if a > 0) {
         return (400, json!({ "error": "金額を入力してください" }));
     }
@@ -719,6 +787,9 @@ fn start_operate(shared: &Shared, op: Op, amount: Option<i64>) -> (u16, Value) {
 fn start_lookup(shared: &Shared) -> (u16, Value) {
     if !shared.configured() {
         return (409, json!({ "error": "API キーが設定されていません" }));
+    }
+    if !shared.reader_present.load(Ordering::SeqCst) {
+        return (409, json!({ "error": "カードリーダが接続されていません" }));
     }
     {
         let mut s = match shared.status.lock() {

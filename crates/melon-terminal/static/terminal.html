@@ -95,6 +95,16 @@
       .infobtn:active {
         background: var(--key-press);
       }
+      /* reader-disconnected warning banner */
+      .readerwarn {
+        background: var(--danger);
+        color: #fff;
+        text-align: center;
+        padding: 11px 14px;
+        font-size: 14px;
+        font-weight: 700;
+        line-height: 1.4;
+      }
       /* op tabs */
       .tabs {
         display: flex;
@@ -355,6 +365,10 @@
         </div>
       </header>
 
+      <div id="readerWarn" class="readerwarn" style="display: none">
+        ⚠ カードリーダが接続されていません。リーダを接続してください。
+      </div>
+
       <div class="tabs" id="tabs">
         <button data-op="pay" class="active">支払い</button>
         <button data-op="topup">チャージ</button>
@@ -534,6 +548,10 @@
 
       // ---- run an operation ----
       async function start() {
+        if (!readerConnected) {
+          showError("カードリーダが接続されていません");
+          return;
+        }
         if (!configured) {
           openSettings(false);
           return;
@@ -791,6 +809,11 @@
               title: "端末が未設定です",
               sub: "「⚙ 設定」から API キーを入力してください",
             };
+          case "NO_READER":
+            return {
+              title: "カードリーダ未接続",
+              sub: "カードリーダを接続してください",
+            };
           case "NETWORK":
           case "NETWORK_LOCAL":
             return {
@@ -977,6 +1000,28 @@
         }
       }
 
+      // ---- card reader presence ----
+      // The kiosk runs even with no reader connected; poll continuously and show a
+      // persistent warning until one appears, then recover.
+      let readerConnected = true; // assume ok until the first poll says otherwise
+      async function pollReader() {
+        try {
+          const j = await (await fetch("/reader")).json();
+          readerConnected = !!j.connected;
+        } catch {
+          /* terminal unreachable — keep the last known state */
+        }
+        $("readerWarn").style.display = readerConnected ? "none" : "block";
+        // If a "no reader" error sheet is open and the reader is back, clear it.
+        if (
+          readerConnected &&
+          $("overlay").classList.contains("show") &&
+          /カードリーダが接続されていません/.test($("sheet").innerHTML)
+        ) {
+          finish();
+        }
+      }
+
       // ---- physical keyboard ----
       // Mirror the on-screen keypad: digits type the amount, Backspace deletes, Enter
       // runs the operation, Escape clears (or cancels/closes while the overlay is up).
@@ -1036,6 +1081,8 @@
       setOp("pay");
       document.addEventListener("keydown", handleKeydown);
       checkConfig(); // prompt for the API key if the terminal isn't configured yet
+      pollReader(); // reflect reader presence, then keep it current
+      setInterval(pollReader, 1500);
     </script>
   </body>
 </html>

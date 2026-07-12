@@ -122,6 +122,13 @@ pub fn open_reader_auto() -> Result<Reader> {
     Ok(reader)
 }
 
+/// Like [`open_reader_auto`] but WITHOUT the "reader opened" log line. Used by the
+/// kiosk to probe for a reader repeatedly (only connect/disconnect transitions are
+/// logged, by the caller). Errors when no reader is connected.
+pub fn open_reader_quiet() -> Result<Reader> {
+    open_reader(ReaderPreference::Auto).map_err(|e| anyhow!("failed to open reader: {e}"))
+}
+
 /// The FeliCa remote target melon polls (Type 3, 212 kbps).
 pub fn make_target() -> Result<RemoteTarget> {
     RemoteTarget::new("212F").map_err(|e| anyhow!("target: {e}"))
