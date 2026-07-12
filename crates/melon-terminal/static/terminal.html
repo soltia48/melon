@@ -1,372 +1,696 @@
 <!doctype html>
 <html lang="ja">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Melon 端末</title>
-<style>
-  :root {
-    --bg: #f4f4f6; --card: #ffffff; --ink: #16181d; --muted: #8a8f98;
-    --line: #e7e8ec; --key: #f6f6f8; --key-press: #e3e4e9;
-    --accent: #2f6bff; --accent-ink: #ffffff;
-    --ok: #12a150; --danger: #e5484d;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0d0f12; --card: #16181d; --ink: #f2f3f5; --muted: #9aa0aa;
-      --line: #262a31; --key: #21242b; --key-press: #2c313a;
-      --accent: #3d7bff; --accent-ink: #ffffff; --ok: #30c46b; --danger: #ff6166;
-    }
-  }
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { height: 100%; margin: 0; }
-  body {
-    background: var(--bg); color: var(--ink);
-    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Segoe UI", sans-serif;
-    display: flex; justify-content: center;
-  }
-  #app {
-    width: 100%; max-width: 460px; min-height: 100%;
-    background: var(--card); display: flex; flex-direction: column;
-  }
-  /* header */
-  .topbar { display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 16px; border-bottom: 1px solid var(--line); }
-  .topbar .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; }
-  .topbar .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
-  .infobtn { border: 1px solid var(--line); background: var(--bg); color: var(--ink);
-    border-radius: 10px; padding: 8px 13px; font-size: 13px; font-weight: 600; }
-  .infobtn:active { background: var(--key-press); }
-  /* op tabs */
-  .tabs { display: flex; gap: 4px; padding: 12px; border-bottom: 1px solid var(--line); }
-  .tabs button {
-    flex: 1; border: none; background: transparent; color: var(--muted);
-    font-size: 15px; font-weight: 600; padding: 10px 4px; border-radius: 10px;
-  }
-  .tabs button.active { background: var(--bg); color: var(--ink); }
-  /* amount */
-  .amount-wrap { padding: 34px 24px 10px; }
-  .amount { font-size: 56px; font-weight: 700; letter-spacing: -1px; line-height: 1; }
-  .amount .yen { font-size: 34px; font-weight: 600; margin-right: 4px; vertical-align: 6px; }
-  .amount.zero { color: var(--muted); }
-  .hint { color: var(--muted); font-size: 15px; margin-top: 12px; min-height: 20px; }
-  /* keypad */
-  .keypad { margin-top: auto; padding: 8px 12px 12px; display: grid;
-    grid-template-columns: repeat(3, 1fr); gap: 8px; }
-  .keypad button {
-    border: none; background: var(--key); color: var(--ink);
-    font-size: 26px; font-weight: 600; padding: 18px 0; border-radius: 14px;
-    transition: background .08s;
-  }
-  .keypad button:active { background: var(--key-press); }
-  .keypad button.sub { color: var(--muted); font-size: 22px; }
-  /* action */
-  .action { padding: 8px 16px 20px; }
-  .action button {
-    width: 100%; border: none; border-radius: 16px; padding: 20px;
-    background: var(--accent); color: var(--accent-ink);
-    font-size: 18px; font-weight: 700;
-  }
-  .action button:disabled { opacity: .45; }
-  .footer { text-align: center; color: var(--muted); font-size: 12px; padding: 0 0 14px; }
-  /* status overlay */
-  .overlay {
-    position: fixed; inset: 0; background: rgba(10,12,16,.55);
-    display: none; align-items: center; justify-content: center; padding: 24px;
-  }
-  .overlay.show { display: flex; }
-  .sheet {
-    width: 100%; max-width: 400px; background: var(--card); color: var(--ink);
-    border-radius: 22px; padding: 32px 24px; text-align: center;
-  }
-  .spinner {
-    width: 54px; height: 54px; margin: 4px auto 18px; border-radius: 50%;
-    border: 5px solid var(--line); border-top-color: var(--accent);
-    animation: spin 1s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .badge { width: 60px; height: 60px; margin: 0 auto 16px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center; font-size: 32px; color: #fff; }
-  .badge.ok { background: var(--ok); }
-  .badge.err { background: var(--danger); }
-  .sheet h2 { margin: 0 0 6px; font-size: 22px; }
-  .sheet .big { font-size: 40px; font-weight: 700; margin: 10px 0 4px; }
-  .sheet p { margin: 6px 0; color: var(--muted); font-size: 15px; }
-  .sheet .rows { text-align: left; margin: 16px 0 4px; border-top: 1px solid var(--line); }
-  .sheet .rows .r { display: flex; justify-content: space-between; padding: 10px 2px;
-    border-bottom: 1px solid var(--line); font-size: 15px; }
-  .sheet .rows .r .k { color: var(--muted); }
-  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
-  .muted { color: var(--muted); }
-  .neg { color: var(--danger); }
-  .refund-list { max-height: 46vh; overflow-y: auto; margin: 16px 0 4px;
-    display: flex; flex-direction: column; gap: 8px; }
-  .refund-row { display: flex; justify-content: space-between; align-items: center;
-    text-align: left; border: 1px solid var(--line); background: var(--bg); color: var(--ink);
-    padding: 14px 16px; border-radius: 14px; font-size: 15px; line-height: 1.35; }
-  .refund-row:active { background: var(--key-press); }
-  .refund-row .ramt { text-align: right; font-weight: 700; white-space: nowrap; }
-  .sheet .sub { color: var(--muted); font-size: 16px; margin-top: 4px; }
-  .sheet .tech { font-size: 11px; color: var(--muted); opacity: .7; margin-top: 12px;
-    word-break: break-all; font-family: ui-monospace, Menlo, monospace; }
-  .sheet .btns { margin-top: 22px; display: flex; gap: 10px; }
-  .sheet .btns button { flex: 1; border: none; border-radius: 14px; padding: 16px;
-    font-size: 16px; font-weight: 700; }
-  .btn-primary { background: var(--accent); color: var(--accent-ink); }
-  .btn-ghost { background: var(--key); color: var(--ink); }
-</style>
-</head>
-<body>
-<div id="app">
-  <header class="topbar">
-    <div class="brand"><span class="dot"></span> Melon 端末</div>
-    <button class="infobtn" onclick="openInfo()">ⓘ 加盟店情報</button>
-  </header>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+    />
+    <title>Melon 端末</title>
+    <style>
+      :root {
+        --bg: #f4f4f6;
+        --card: #ffffff;
+        --ink: #16181d;
+        --muted: #8a8f98;
+        --line: #e7e8ec;
+        --key: #f6f6f8;
+        --key-press: #e3e4e9;
+        --accent: #2f6bff;
+        --accent-ink: #ffffff;
+        --ok: #12a150;
+        --danger: #e5484d;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0d0f12;
+          --card: #16181d;
+          --ink: #f2f3f5;
+          --muted: #9aa0aa;
+          --line: #262a31;
+          --key: #21242b;
+          --key-press: #2c313a;
+          --accent: #3d7bff;
+          --accent-ink: #ffffff;
+          --ok: #30c46b;
+          --danger: #ff6166;
+        }
+      }
+      * {
+        box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP",
+          "Segoe UI", sans-serif;
+        display: flex;
+        justify-content: center;
+      }
+      #app {
+        width: 100%;
+        max-width: 460px;
+        min-height: 100%;
+        background: var(--card);
+        display: flex;
+        flex-direction: column;
+      }
+      /* header */
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+      .topbar .brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 700;
+        font-size: 15px;
+      }
+      .topbar .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+      .infobtn {
+        border: 1px solid var(--line);
+        background: var(--bg);
+        color: var(--ink);
+        border-radius: 10px;
+        padding: 8px 13px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .infobtn:active {
+        background: var(--key-press);
+      }
+      /* op tabs */
+      .tabs {
+        display: flex;
+        gap: 4px;
+        padding: 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      .tabs button {
+        flex: 1;
+        border: none;
+        background: transparent;
+        color: var(--muted);
+        font-size: 15px;
+        font-weight: 600;
+        padding: 10px 4px;
+        border-radius: 10px;
+      }
+      .tabs button.active {
+        background: var(--bg);
+        color: var(--ink);
+      }
+      /* amount */
+      .amount-wrap {
+        padding: 34px 24px 10px;
+      }
+      .amount {
+        font-size: 56px;
+        font-weight: 700;
+        letter-spacing: -1px;
+        line-height: 1;
+      }
+      .amount .yen {
+        font-size: 34px;
+        font-weight: 600;
+        margin-right: 4px;
+        vertical-align: 6px;
+      }
+      .amount.zero {
+        color: var(--muted);
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 15px;
+        margin-top: 12px;
+        min-height: 20px;
+      }
+      /* keypad */
+      .keypad {
+        margin-top: auto;
+        padding: 8px 12px 12px;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+      }
+      .keypad button {
+        border: none;
+        background: var(--key);
+        color: var(--ink);
+        font-size: 26px;
+        font-weight: 600;
+        padding: 18px 0;
+        border-radius: 14px;
+        transition: background 0.08s;
+      }
+      .keypad button:active {
+        background: var(--key-press);
+      }
+      .keypad button.sub {
+        color: var(--muted);
+        font-size: 22px;
+      }
+      /* action */
+      .action {
+        padding: 8px 16px 20px;
+      }
+      .action button {
+        width: 100%;
+        border: none;
+        border-radius: 16px;
+        padding: 20px;
+        background: var(--accent);
+        color: var(--accent-ink);
+        font-size: 18px;
+        font-weight: 700;
+      }
+      .action button:disabled {
+        opacity: 0.45;
+      }
+      .footer {
+        text-align: center;
+        color: var(--muted);
+        font-size: 12px;
+        padding: 0 0 14px;
+      }
+      /* status overlay */
+      .overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(10, 12, 16, 0.55);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      .overlay.show {
+        display: flex;
+      }
+      .sheet {
+        width: 100%;
+        max-width: 400px;
+        background: var(--card);
+        color: var(--ink);
+        border-radius: 22px;
+        padding: 32px 24px;
+        text-align: center;
+      }
+      .spinner {
+        width: 54px;
+        height: 54px;
+        margin: 4px auto 18px;
+        border-radius: 50%;
+        border: 5px solid var(--line);
+        border-top-color: var(--accent);
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .badge {
+        width: 60px;
+        height: 60px;
+        margin: 0 auto 16px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 32px;
+        color: #fff;
+      }
+      .badge.ok {
+        background: var(--ok);
+      }
+      .badge.err {
+        background: var(--danger);
+      }
+      .sheet h2 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      .sheet .big {
+        font-size: 40px;
+        font-weight: 700;
+        margin: 10px 0 4px;
+      }
+      .sheet p {
+        margin: 6px 0;
+        color: var(--muted);
+        font-size: 15px;
+      }
+      .sheet .rows {
+        text-align: left;
+        margin: 16px 0 4px;
+        border-top: 1px solid var(--line);
+      }
+      .sheet .rows .r {
+        display: flex;
+        justify-content: space-between;
+        padding: 10px 2px;
+        border-bottom: 1px solid var(--line);
+        font-size: 15px;
+      }
+      .sheet .rows .r .k {
+        color: var(--muted);
+      }
+      .mono {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .neg {
+        color: var(--danger);
+      }
+      .refund-list {
+        max-height: 46vh;
+        overflow-y: auto;
+        margin: 16px 0 4px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .refund-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        text-align: left;
+        border: 1px solid var(--line);
+        background: var(--bg);
+        color: var(--ink);
+        padding: 14px 16px;
+        border-radius: 14px;
+        font-size: 15px;
+        line-height: 1.35;
+      }
+      .refund-row:active {
+        background: var(--key-press);
+      }
+      .refund-row .ramt {
+        text-align: right;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+      .sheet .sub {
+        color: var(--muted);
+        font-size: 16px;
+        margin-top: 4px;
+      }
+      .sheet .tech {
+        font-size: 11px;
+        color: var(--muted);
+        opacity: 0.7;
+        margin-top: 12px;
+        word-break: break-all;
+        font-family: ui-monospace, Menlo, monospace;
+      }
+      .sheet .btns {
+        margin-top: 22px;
+        display: flex;
+        gap: 10px;
+      }
+      .sheet .btns button {
+        flex: 1;
+        border: none;
+        border-radius: 14px;
+        padding: 16px;
+        font-size: 16px;
+        font-weight: 700;
+      }
+      .btn-primary {
+        background: var(--accent);
+        color: var(--accent-ink);
+      }
+      .btn-ghost {
+        background: var(--key);
+        color: var(--ink);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand"><span class="dot"></span> Melon 端末</div>
+        <button class="infobtn" onclick="openInfo()">ⓘ 加盟店情報</button>
+      </header>
 
-  <div class="tabs" id="tabs">
-    <button data-op="pay" class="active">支払い</button>
-    <button data-op="topup">チャージ</button>
-    <button data-op="balance">残高</button>
-    <button data-op="refund">返金</button>
-  </div>
+      <div class="tabs" id="tabs">
+        <button data-op="pay" class="active">支払い</button>
+        <button data-op="topup">チャージ</button>
+        <button data-op="balance">残高</button>
+        <button data-op="refund">返金</button>
+      </div>
 
-  <div class="amount-wrap">
-    <div id="amount" class="amount zero"><span class="yen">¥</span><span id="amountVal">0</span></div>
-    <div id="hint" class="hint"></div>
-  </div>
+      <div class="amount-wrap">
+        <div id="amount" class="amount zero">
+          <span class="yen">¥</span><span id="amountVal">0</span>
+        </div>
+        <div id="hint" class="hint"></div>
+      </div>
 
-  <div class="keypad" id="keypad"></div>
+      <div class="keypad" id="keypad"></div>
 
-  <div class="action">
-    <button id="go" onclick="start()">支払う</button>
-  </div>
-</div>
+      <div class="action">
+        <button id="go" onclick="start()">支払う</button>
+      </div>
+    </div>
 
-<div class="overlay" id="overlay">
-  <div class="sheet" id="sheet"></div>
-</div>
-<div class="overlay" id="infoOverlay">
-  <div class="sheet" id="infoSheet"></div>
-</div>
+    <div class="overlay" id="overlay">
+      <div class="sheet" id="sheet"></div>
+    </div>
+    <div class="overlay" id="infoOverlay">
+      <div class="sheet" id="infoSheet"></div>
+    </div>
 
-<script>
-const $ = id => document.getElementById(id);
-const yen = n => "¥" + Number(n || 0).toLocaleString("ja-JP");
-const LABEL = { pay: "支払う", topup: "チャージする", balance: "残高を確認", refund: "返金する支払いを表示" };
-const DONE_TITLE = { pay: "支払い完了", topup: "チャージ完了", balance: "残高", refund: "返金完了" };
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const yen = (n) => "¥" + Number(n || 0).toLocaleString("ja-JP");
+      const LABEL = {
+        pay: "支払う",
+        topup: "チャージする",
+        balance: "残高を確認",
+        refund: "返金する支払いを表示",
+      };
+      const DONE_TITLE = {
+        pay: "支払い完了",
+        topup: "チャージ完了",
+        balance: "残高",
+        refund: "返金完了",
+      };
 
-let op = "pay";
-let digits = "";     // amount as typed (string of digits)
-let polling = null;
-let played = false;  // one sound per job
-let refundList = []; // refundable payments in the select phase
-let refundCard = null;
+      let op = "pay";
+      let digits = ""; // amount as typed (string of digits)
+      let polling = null;
+      let played = false; // one sound per job
+      let refundList = []; // refundable payments in the select phase
+      let refundCard = null;
 
-// ---- sound effects (synthesized; no assets, works offline) ----
-let audioCtx = null;
-// Lazily create/resume the AudioContext inside a user gesture (browsers block
-// audio otherwise). Safe to call repeatedly.
-function unlockAudio() {
-  try {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === "suspended") audioCtx.resume();
-  } catch {}
-}
-// Schedule one enveloped tone (attack/decay ramp avoids clicks).
-function tone(ctx, freq, t0, dur, type, peak) {
-  const osc = ctx.createOscillator(), g = ctx.createGain();
-  osc.type = type || "sine";
-  osc.frequency.value = freq;
-  osc.connect(g); g.connect(ctx.destination);
-  const t = ctx.currentTime + t0;
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(peak || 0.2, t + 0.012);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  osc.start(t);
-  osc.stop(t + dur + 0.03);
-}
-// [freq, startSec, durSec, type?, peak?]
-const SOUNDS = {
-  pay:     [[784, 0, 0.11], [1047, 0.09, 0.18]],                       // G5→C6, cheerful
-  topup:   [[523, 0, 0.09], [659, 0.08, 0.09], [880, 0.16, 0.20]],     // C5-E5-A5 rising
-  balance: [[698, 0, 0.15, "triangle"], [880, 0.11, 0.17, "triangle"]],// soft, informational
-  refund:  [[880, 0, 0.10], [659, 0.09, 0.10], [988, 0.18, 0.18]],     // gentle "returned"
-  error:   [[330, 0, 0.20, "square", 0.15], [233, 0.16, 0.34, "square", 0.15]], // low descending buzz
-};
-function playSound(kind) {
-  try {
-    unlockAudio();
-    if (!audioCtx) return;
-    for (const [f, t0, d, type, peak] of (SOUNDS[kind] || SOUNDS.balance)) {
-      tone(audioCtx, f, t0, d, type, peak);
-    }
-  } catch {}
-}
+      // ---- sound effects (synthesized; no assets, works offline) ----
+      let audioCtx = null;
+      // Lazily create/resume the AudioContext inside a user gesture (browsers block
+      // audio otherwise). Safe to call repeatedly.
+      function unlockAudio() {
+        try {
+          if (!audioCtx)
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          if (audioCtx.state === "suspended") audioCtx.resume();
+        } catch {}
+      }
+      // Schedule one enveloped tone (attack/decay ramp avoids clicks).
+      function tone(ctx, freq, t0, dur, type, peak) {
+        const osc = ctx.createOscillator(),
+          g = ctx.createGain();
+        osc.type = type || "sine";
+        osc.frequency.value = freq;
+        osc.connect(g);
+        g.connect(ctx.destination);
+        const t = ctx.currentTime + t0;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(peak || 0.2, t + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        osc.start(t);
+        osc.stop(t + dur + 0.03);
+      }
+      // [freq, startSec, durSec, type?, peak?]
+      const SOUNDS = {
+        pay: [
+          [784, 0, 0.11],
+          [1047, 0.09, 0.18],
+        ], // G5→C6, cheerful
+        topup: [
+          [523, 0, 0.09],
+          [659, 0.08, 0.09],
+          [880, 0.16, 0.2],
+        ], // C5-E5-A5 rising
+        balance: [
+          [698, 0, 0.15, "triangle"],
+          [880, 0.11, 0.17, "triangle"],
+        ], // soft, informational
+        refund: [
+          [880, 0, 0.1],
+          [659, 0.09, 0.1],
+          [988, 0.18, 0.18],
+        ], // gentle "returned"
+        error: [
+          [330, 0, 0.2, "square", 0.15],
+          [233, 0.16, 0.34, "square", 0.15],
+        ], // low descending buzz
+      };
+      function playSound(kind) {
+        try {
+          unlockAudio();
+          if (!audioCtx) return;
+          for (const [f, t0, d, type, peak] of SOUNDS[kind] || SOUNDS.balance) {
+            tone(audioCtx, f, t0, d, type, peak);
+          }
+        } catch {}
+      }
 
-// ---- amount / keypad ----
-function amountValue() { return digits === "" ? 0 : parseInt(digits, 10); }
-function renderAmount() {
-  const v = amountValue();
-  $("amountVal").textContent = v.toLocaleString("ja-JP");
-  $("amount").classList.toggle("zero", v === 0);
-  $("go").disabled = ((op === "pay" || op === "topup") && v <= 0);
-}
-function press(k) {
-  if (k === "C") digits = "";
-  else if (k === "<") digits = digits.slice(0, -1);
-  else if (digits.length < 7) digits = (digits + k).replace(/^0+/, "");
-  renderAmount();
-}
-function buildKeypad() {
-  const keys = ["1","2","3","4","5","6","7","8","9","C","0","<"];
-  $("keypad").innerHTML = keys.map(k =>
-    `<button class="${k === "C" || k === "<" ? "sub" : ""}" onclick="press('${k}')">${k === "<" ? "⌫" : k}</button>`
-  ).join("");
-}
+      // ---- amount / keypad ----
+      function amountValue() {
+        return digits === "" ? 0 : parseInt(digits, 10);
+      }
+      function renderAmount() {
+        const v = amountValue();
+        $("amountVal").textContent = v.toLocaleString("ja-JP");
+        $("amount").classList.toggle("zero", v === 0);
+        $("go").disabled = (op === "pay" || op === "topup") && v <= 0;
+      }
+      function press(k) {
+        if (k === "C") digits = "";
+        else if (k === "<") digits = digits.slice(0, -1);
+        else if (digits.length < 7) digits = (digits + k).replace(/^0+/, "");
+        renderAmount();
+      }
+      function buildKeypad() {
+        // テンキー配列(電卓・キーボードのテンキーと同じ 7-8-9 が上段)
+        const keys = [
+          "7",
+          "8",
+          "9",
+          "4",
+          "5",
+          "6",
+          "1",
+          "2",
+          "3",
+          "C",
+          "0",
+          "<",
+        ];
+        $("keypad").innerHTML = keys
+          .map(
+            (k) =>
+              `<button class="${k === "C" || k === "<" ? "sub" : ""}" onclick="press('${k}')">${k === "<" ? "⌫" : k}</button>`,
+          )
+          .join("");
+      }
 
-// ---- op tabs ----
-$("tabs").querySelectorAll("button").forEach(b => b.onclick = () => setOp(b.dataset.op));
-function setOp(next) {
-  op = next;
-  $("tabs").querySelectorAll("button").forEach(b => b.classList.toggle("active", b.dataset.op === op));
-  const spend = op === "pay" || op === "topup";
-  $("keypad").style.display = spend ? "grid" : "none";
-  $("amount").style.display = spend ? "block" : "none";
-  $("hint").textContent = spend ? ""
-    : op === "balance" ? "カードをかざすと残高を表示します"
-    : "カードをかざすと返金できる支払いを表示します";
-  $("go").textContent = LABEL[op];
-  digits = "";
-  renderAmount();
-}
+      // ---- op tabs ----
+      $("tabs")
+        .querySelectorAll("button")
+        .forEach((b) => (b.onclick = () => setOp(b.dataset.op)));
+      function setOp(next) {
+        op = next;
+        $("tabs")
+          .querySelectorAll("button")
+          .forEach((b) => b.classList.toggle("active", b.dataset.op === op));
+        const spend = op === "pay" || op === "topup";
+        $("keypad").style.display = spend ? "grid" : "none";
+        $("amount").style.display = spend ? "block" : "none";
+        $("hint").textContent = spend
+          ? ""
+          : op === "balance"
+            ? "カードをかざすと残高を表示します"
+            : "カードをかざすと返金できる支払いを表示します";
+        $("go").textContent = LABEL[op];
+        digits = "";
+        renderAmount();
+      }
 
-// ---- run an operation ----
-async function start() {
-  unlockAudio();   // this call is a user gesture; primes audio for the result sound
-  played = false;
-  try {
-    let res;
-    if (op === "balance") {
-      res = await fetch("/op/balance");
-    } else if (op === "refund") {
-      res = await fetch("/op/refund-lookup", { method: "POST" });
-    } else {
-      res = await fetch("/op/" + op, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: amountValue() }),
-      });
-    }
-    if (!res.ok && res.status !== 202) {
-      const j = await res.json().catch(() => ({}));
-      return showError(j.error || ("HTTP " + res.status));
-    }
-    openOverlay();
-    startPolling();
-  } catch (e) { showError("端末に接続できません: " + e.message); }
-}
+      // ---- run an operation ----
+      async function start() {
+        unlockAudio(); // this call is a user gesture; primes audio for the result sound
+        played = false;
+        try {
+          let res;
+          if (op === "balance") {
+            res = await fetch("/op/balance");
+          } else if (op === "refund") {
+            res = await fetch("/op/refund-lookup", { method: "POST" });
+          } else {
+            res = await fetch("/op/" + op, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ amount: amountValue() }),
+            });
+          }
+          if (!res.ok && res.status !== 202) {
+            const j = await res.json().catch(() => ({}));
+            return showError(j.error || "HTTP " + res.status);
+          }
+          openOverlay();
+          startPolling();
+        } catch (e) {
+          showError("端末に接続できません: " + e.message);
+        }
+      }
 
-function startPolling() {
-  stopPolling();
-  polling = setInterval(tick, 400);
-  tick();
-}
-function stopPolling() { if (polling) { clearInterval(polling); polling = null; } }
+      function startPolling() {
+        stopPolling();
+        polling = setInterval(tick, 400);
+        tick();
+      }
+      function stopPolling() {
+        if (polling) {
+          clearInterval(polling);
+          polling = null;
+        }
+      }
 
-async function tick() {
-  let s;
-  try { s = await (await fetch("/status")).json(); }
-  catch { return; }
-  render(s);
-}
+      async function tick() {
+        let s;
+        try {
+          s = await (await fetch("/status")).json();
+        } catch {
+          return;
+        }
+        render(s);
+      }
 
-// ---- overlay rendering ----
-function openOverlay() { $("overlay").classList.add("show"); }
-function closeOverlay() { $("overlay").classList.remove("show"); }
+      // ---- overlay rendering ----
+      function openOverlay() {
+        $("overlay").classList.add("show");
+      }
+      function closeOverlay() {
+        $("overlay").classList.remove("show");
+      }
 
-function render(s) {
-  const sheet = $("sheet");
-  if (s.phase === "waiting") {
-    sheet.innerHTML = `<div class="spinner"></div>
+      function render(s) {
+        const sheet = $("sheet");
+        if (s.phase === "waiting") {
+          sheet.innerHTML = `<div class="spinner"></div>
       <h2>カードをかざしてください</h2>
-      ${s.op === "pay" || s.op === "topup"
-        ? `<div class="big">${yen(s.amount)}</div><p>${s.op === "topup" ? "チャージ" : "支払い"}</p>`
-        : `<p>${s.op === "refund" ? "返金" : "残高照会"}</p>`}
+      ${
+        s.op === "pay" || s.op === "topup"
+          ? `<div class="big">${yen(s.amount)}</div><p>${s.op === "topup" ? "チャージ" : "支払い"}</p>`
+          : `<p>${s.op === "refund" ? "返金" : "残高照会"}</p>`
+      }
       <div class="btns"><button class="btn-ghost" onclick="cancelJob()">キャンセル</button></div>`;
-  } else if (s.phase === "authenticating" || s.phase === "processing") {
-    sheet.innerHTML = `<div class="spinner"></div>
+        } else if (s.phase === "authenticating" || s.phase === "processing") {
+          sheet.innerHTML = `<div class="spinner"></div>
       <h2>${s.phase === "authenticating" ? "認証中…" : "処理中…"}</h2>
       <p>カードを離さないでください</p>`;
-  } else if (s.phase === "select") {
-    stopPolling();
-    refundList = s.refundable || [];
-    refundCard = s.card || null;
-    renderSelect();
-  } else if (s.phase === "done") {
-    stopPolling();
-    if (!played) { played = true; playSound(s.op); }   // pay / topup / balance / refund
-    sheet.innerHTML = doneHtml(s);
-  } else if (s.phase === "error") {
-    stopPolling();
-    if (!played) { played = true; playSound("error"); }
-    const e = localizeError(s.error_code, s.error_details);
-    sheet.innerHTML = `<div class="badge err">×</div>
+        } else if (s.phase === "select") {
+          stopPolling();
+          refundList = s.refundable || [];
+          refundCard = s.card || null;
+          renderSelect();
+        } else if (s.phase === "done") {
+          stopPolling();
+          if (!played) {
+            played = true;
+            playSound(s.op);
+          } // pay / topup / balance / refund
+          sheet.innerHTML = doneHtml(s);
+        } else if (s.phase === "error") {
+          stopPolling();
+          if (!played) {
+            played = true;
+            playSound("error");
+          }
+          const e = localizeError(s.error_code, s.error_details);
+          sheet.innerHTML = `<div class="badge err">×</div>
       <h2>${esc(e.title)}</h2>
       ${e.sub ? `<p class="sub">${esc(e.sub)}</p>` : ""}
       ${s.error ? `<p class="tech">${esc(s.error)}</p>` : ""}
       <div class="btns"><button class="btn-primary" onclick="finish()">閉じる</button></div>`;
-  } else if (s.phase === "idle") {
-    stopPolling(); closeOverlay();
-  }
-}
+        } else if (s.phase === "idle") {
+          stopPolling();
+          closeOverlay();
+        }
+      }
 
-function doneHtml(s) {
-  const r = s.result || {};
-  const acct = s.card ? `<div class="r"><span class="k">利用者 ID</span><span class="mono">${esc(shortId(s.card.account_id))}</span></div>` : "";
-  let body;
-  if (s.op === "balance") {
-    const buckets = (r.buckets || []).map(b =>
-      `<div class="r"><span class="k mono">${esc((b.expires_at||"").slice(0,10))} まで</span><span>${yen(b.remaining)}</span></div>`
-    ).join("") || `<div class="r"><span class="k">有効な残高</span><span>なし</span></div>`;
-    body = `<div class="big">${yen(r.total)}</div><p>利用可能残高</p>
+      function doneHtml(s) {
+        const r = s.result || {};
+        const acct = s.card
+          ? `<div class="r"><span class="k">利用者 ID</span><span class="mono">${esc(shortId(s.card.account_id))}</span></div>`
+          : "";
+        let body;
+        if (s.op === "balance") {
+          const buckets =
+            (r.buckets || [])
+              .map(
+                (b) =>
+                  `<div class="r"><span class="k mono">${esc((b.expires_at || "").slice(0, 10))} まで</span><span>${yen(b.remaining)}</span></div>`,
+              )
+              .join("") ||
+            `<div class="r"><span class="k">有効な残高</span><span>なし</span></div>`;
+          body = `<div class="big">${yen(r.total)}</div><p>利用可能残高</p>
       <div class="rows">${buckets}${acct}</div>`;
-  } else if (s.op === "topup") {
-    body = `<div class="big">${yen(r.amount)}</div><p>チャージしました</p>
+        } else if (s.op === "topup") {
+          body = `<div class="big">${yen(r.amount)}</div><p>チャージしました</p>
       <div class="rows">
         <div class="r"><span class="k">チャージ後残高</span><span>${yen(r.balance)}</span></div>
-        <div class="r"><span class="k">有効期限</span><span class="mono">${esc((r.expires_at||"").slice(0,10))}</span></div>
+        <div class="r"><span class="k">有効期限</span><span class="mono">${esc((r.expires_at || "").slice(0, 10))}</span></div>
         ${acct}</div>`;
-  } else if (s.op === "refund") {
-    body = `<div class="big">${yen(r.amount)}</div><p>返金しました</p>
+        } else if (s.op === "refund") {
+          body = `<div class="big">${yen(r.amount)}</div><p>返金しました</p>
       <div class="rows">
         <div class="r"><span class="k">返金後残高</span><span>${yen(r.balance)}</span></div>
         ${acct}</div>`;
-  } else {
-    body = `<div class="big">${yen(r.amount)}</div><p>お支払いありがとうございます</p>
+        } else {
+          body = `<div class="big">${yen(r.amount)}</div><p>お支払いありがとうございます</p>
       <div class="rows">
         <div class="r"><span class="k">お支払い後残高</span><span>${yen(r.balance)}</span></div>
         ${acct}</div>`;
-  }
-  return `<div class="badge ok">✓</div><h2>${DONE_TITLE[s.op] || "完了"}</h2>${body}
+        }
+        return `<div class="badge ok">✓</div><h2>${DONE_TITLE[s.op] || "完了"}</h2>${body}
     <div class="btns"><button class="btn-primary" onclick="finish()">完了</button></div>`;
-}
+      }
 
-// ---- refund: select from the list, then confirm the amount ----
-function renderSelect() {
-  const acct = refundCard ? `<p class="sub mono">利用者 ID ${esc(shortId(refundCard.account_id))}</p>` : "";
-  const rows = refundList.length ? refundList.map((p, i) =>
-    `<button class="refund-row" onclick="pickRefund(${i})">
+      // ---- refund: select from the list, then confirm the amount ----
+      function renderSelect() {
+        const acct = refundCard
+          ? `<p class="sub mono">利用者 ID ${esc(shortId(refundCard.account_id))}</p>`
+          : "";
+        const rows = refundList.length
+          ? refundList
+              .map(
+                (p, i) =>
+                  `<button class="refund-row" onclick="pickRefund(${i})">
        <span><span class="mono">${esc(fmtDate(p.occurred_at))}</span><br><span class="muted">支払 ${yen(p.amount)}</span></span>
        <span class="ramt">${yen(p.refundable)}<br><span class="muted">返金可</span></span>
-     </button>`).join("")
-    : `<p class="sub" style="margin:24px 0">返金できる支払いはありません</p>`;
-  $("sheet").innerHTML = `<h2>返金する支払いを選択</h2>${acct}
+     </button>`,
+              )
+              .join("")
+          : `<p class="sub" style="margin:24px 0">返金できる支払いはありません</p>`;
+        $("sheet").innerHTML = `<h2>返金する支払いを選択</h2>${acct}
     <div class="refund-list">${rows}</div>
     <div class="btns"><button class="btn-ghost" onclick="finish()">戻る</button></div>`;
-}
-function pickRefund(i) {
-  const p = refundList[i];
-  if (!p) return;
-  $("sheet").innerHTML = `<h2>返金</h2>
+      }
+      function pickRefund(i) {
+        const p = refundList[i];
+        if (!p) return;
+        $("sheet").innerHTML = `<h2>返金</h2>
     <p class="sub"><span class="mono">${esc(fmtDate(p.occurred_at))}</span> の支払い ${yen(p.amount)}</p>
     <div style="margin:18px 0">
       <label class="muted" style="font-size:13px">返金額(円)</label>
@@ -378,98 +702,169 @@ function pickRefund(i) {
       <button class="btn-ghost" onclick="renderSelect()">戻る</button>
       <button class="btn-primary" onclick="confirmRefund('${esc(p.id)}', ${p.refundable})">返金する</button>
     </div>`;
-}
-async function confirmRefund(paymentId, refundable) {
-  let amount = parseInt($("refAmt").value, 10);
-  if (!(amount > 0)) return;
-  if (amount > refundable) amount = refundable;
-  played = false;
-  try {
-    const res = await fetch("/op/refund", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ payment_id: paymentId, amount }),
-    });
-    if (!res.ok && res.status !== 202) {
-      const j = await res.json().catch(() => ({}));
-      return showError(j.error || ("HTTP " + res.status));
-    }
-    startPolling(); // watch processing → done
-  } catch (e) { showError("端末に接続できません: " + e.message); }
-}
-const fmtDate = s => { try { return new Date(s).toLocaleString("ja-JP", { month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" }); } catch { return s; } };
+      }
+      async function confirmRefund(paymentId, refundable) {
+        let amount = parseInt($("refAmt").value, 10);
+        if (!(amount > 0)) return;
+        if (amount > refundable) amount = refundable;
+        played = false;
+        try {
+          const res = await fetch("/op/refund", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ payment_id: paymentId, amount }),
+          });
+          if (!res.ok && res.status !== 202) {
+            const j = await res.json().catch(() => ({}));
+            return showError(j.error || "HTTP " + res.status);
+          }
+          startPolling(); // watch processing → done
+        } catch (e) {
+          showError("端末に接続できません: " + e.message);
+        }
+      }
+      const fmtDate = (s) => {
+        try {
+          return new Date(s).toLocaleString("ja-JP", {
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+        } catch {
+          return s;
+        }
+      };
 
-// Map a stable error code (+ structured details) to a friendly Japanese message.
-function localizeError(code, d) {
-  switch (code) {
-    case "INSUFFICIENT_FUNDS":
-      return { title: "残高が不足しています",
-        sub: d && d.available != null ? `残高 ${yen(d.available)} / お会計 ${yen(d.requested)}` : "チャージしてからお試しください" };
-    case "CREDIT_LIMIT_EXCEEDED":
-      return { title: "チャージできません", sub: "加盟店の与信限度を超えています" };
-    case "REFUND_EXCEEDS_PAYMENT":
-      return { title: "返金できません", sub: "返金可能額を超えています" };
-    case "SYSTEM_NOT_SUPPORTED":
-      return { title: "対応していないカードです", sub: "このカードは利用できません" };
-    case "CARD_LOST":
-      return { title: "カードが離れました", sub: "もう一度かざしてください" };
-    case "AUTH_FAILED":
-      return { title: "カードを認識できませんでした", sub: "もう一度かざしてください" };
-    case "FORBIDDEN":
-      return { title: "この加盟店は利用できません", sub: "" };
-    case "UNAUTHORIZED":
-      return { title: "端末の設定エラー", sub: "API キーを確認してください" };
-    case "NETWORK":
-    case "NETWORK_LOCAL":
-      return { title: "接続できません", sub: "通信環境を確認してください" };
-    case "BAD_REQUEST":
-      return { title: "入力を確認してください", sub: "" };
-    case "IDEMPOTENCY_CONFLICT":
-      return { title: "すでに処理済みです", sub: "" };
-    case "NOT_FOUND":
-      return { title: "対象が見つかりません", sub: "" };
-    case "INTERNAL":
-      return { title: "サーバでエラーが発生しました", sub: "しばらくして再度お試しください" };
-    default:
-      return { title: "エラーが発生しました", sub: "もう一度お試しください" };
-  }
-}
+      // Map a stable error code (+ structured details) to a friendly Japanese message.
+      function localizeError(code, d) {
+        switch (code) {
+          case "INSUFFICIENT_FUNDS":
+            return {
+              title: "残高が不足しています",
+              sub:
+                d && d.available != null
+                  ? `残高 ${yen(d.available)} / お会計 ${yen(d.requested)}`
+                  : "チャージしてからお試しください",
+            };
+          case "CREDIT_LIMIT_EXCEEDED":
+            return {
+              title: "チャージできません",
+              sub: "加盟店の与信限度を超えています",
+            };
+          case "REFUND_EXCEEDS_PAYMENT":
+            return { title: "返金できません", sub: "返金可能額を超えています" };
+          case "SYSTEM_NOT_SUPPORTED":
+            return {
+              title: "対応していないカードです",
+              sub: "このカードは利用できません",
+            };
+          case "CARD_LOST":
+            return {
+              title: "カードが離れました",
+              sub: "もう一度かざしてください",
+            };
+          case "AUTH_FAILED":
+            return {
+              title: "カードを認識できませんでした",
+              sub: "もう一度かざしてください",
+            };
+          case "FORBIDDEN":
+            return { title: "この加盟店は利用できません", sub: "" };
+          case "UNAUTHORIZED":
+            return {
+              title: "端末の設定エラー",
+              sub: "API キーを確認してください",
+            };
+          case "NETWORK":
+          case "NETWORK_LOCAL":
+            return {
+              title: "接続できません",
+              sub: "通信環境を確認してください",
+            };
+          case "BAD_REQUEST":
+            return { title: "入力を確認してください", sub: "" };
+          case "IDEMPOTENCY_CONFLICT":
+            return { title: "すでに処理済みです", sub: "" };
+          case "NOT_FOUND":
+            return { title: "対象が見つかりません", sub: "" };
+          case "INTERNAL":
+            return {
+              title: "サーバでエラーが発生しました",
+              sub: "しばらくして再度お試しください",
+            };
+          default:
+            return {
+              title: "エラーが発生しました",
+              sub: "もう一度お試しください",
+            };
+        }
+      }
 
-async function cancelJob() { try { await fetch("/cancel", { method: "POST" }); } catch {} }
-async function finish() {
-  try { await fetch("/reset", { method: "POST" }); } catch {}
-  stopPolling(); closeOverlay();
-  digits = ""; renderAmount();
-}
-function showError(msg) {
-  if (!played) { played = true; playSound("error"); }
-  openOverlay();
-  $("sheet").innerHTML = `<div class="badge err">×</div><h2>エラー</h2>
+      async function cancelJob() {
+        try {
+          await fetch("/cancel", { method: "POST" });
+        } catch {}
+      }
+      async function finish() {
+        try {
+          await fetch("/reset", { method: "POST" });
+        } catch {}
+        stopPolling();
+        closeOverlay();
+        digits = "";
+        renderAmount();
+      }
+      function showError(msg) {
+        if (!played) {
+          played = true;
+          playSound("error");
+        }
+        openOverlay();
+        $("sheet").innerHTML = `<div class="badge err">×</div><h2>エラー</h2>
     <p style="color:var(--danger)">${esc(msg)}</p>
     <div class="btns"><button class="btn-primary" onclick="finish()">閉じる</button></div>`;
-}
-const shortId = id => { const s = String(id ?? ""); return s.length > 13 ? s.slice(0, 8) + "…" + s.slice(-4) : s; };
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c]));
+      }
+      const shortId = (id) => {
+        const s = String(id ?? "");
+        return s.length > 13 ? s.slice(0, 8) + "…" + s.slice(-4) : s;
+      };
+      const esc = (s) =>
+        String(s ?? "").replace(
+          /[&<>"]/g,
+          (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c],
+        );
 
-// ---- merchant info (加盟店情報) ----
-async function openInfo() {
-  $("infoOverlay").classList.add("show");
-  $("infoSheet").innerHTML = `<div class="spinner"></div><h2>読み込み中…</h2>`;
-  try {
-    const res = await fetch("/me");
-    const m = await res.json();
-    if (!res.ok) throw new Error(m.error || ("HTTP " + res.status));
-    $("infoSheet").innerHTML = infoHtml(m);
-  } catch (e) {
-    $("infoSheet").innerHTML = `<div class="badge err">×</div><h2>取得できません</h2>
+      // ---- merchant info (加盟店情報) ----
+      async function openInfo() {
+        $("infoOverlay").classList.add("show");
+        $("infoSheet").innerHTML =
+          `<div class="spinner"></div><h2>読み込み中…</h2>`;
+        try {
+          const res = await fetch("/me");
+          const m = await res.json();
+          if (!res.ok) throw new Error(m.error || "HTTP " + res.status);
+          $("infoSheet").innerHTML = infoHtml(m);
+        } catch (e) {
+          $("infoSheet").innerHTML =
+            `<div class="badge err">×</div><h2>取得できません</h2>
       <p class="sub">${esc(e.message)}</p>
       <div class="btns"><button class="btn-primary" onclick="closeInfo()">閉じる</button></div>`;
-  }
-}
-function closeInfo() { $("infoOverlay").classList.remove("show"); }
-function infoHtml(m) {
-  const chargeable = (m.collected || 0) + (m.credit_limit || 0);
-  const dt = (() => { try { return new Date(m.created_at).toLocaleString("ja-JP"); } catch { return m.created_at; } })();
-  return `<h2>加盟店情報</h2>
+        }
+      }
+      function closeInfo() {
+        $("infoOverlay").classList.remove("show");
+      }
+      function infoHtml(m) {
+        const chargeable = (m.collected || 0) + (m.credit_limit || 0);
+        const dt = (() => {
+          try {
+            return new Date(m.created_at).toLocaleString("ja-JP");
+          } catch {
+            return m.created_at;
+          }
+        })();
+        return `<h2>加盟店情報</h2>
     <div class="big ${m.collected < 0 ? "neg" : ""}">${yen(m.collected)}</div>
     <p class="sub">精算残高(発行者からの受取額)</p>
     <div class="rows">
@@ -482,52 +877,55 @@ function infoHtml(m) {
       <div class="r"><span class="k">登録日時</span><span class="mono">${esc(dt)}</span></div>
     </div>
     <div class="btns"><button class="btn-primary" onclick="closeInfo()">閉じる</button></div>`;
-}
+      }
 
-// ---- physical keyboard ----
-// Mirror the on-screen keypad: digits type the amount, Backspace deletes, Enter
-// runs the operation, Escape clears (or cancels/closes while the overlay is up).
-function handleKeydown(e) {
-  if (e.metaKey || e.ctrlKey || e.altKey) return;
-  if ($("infoOverlay").classList.contains("show")) {
-    if (e.key === "Escape" || e.key === "Enter") { e.preventDefault(); closeInfo(); }
-    return;
-  }
-  const overlayOpen = $("overlay").classList.contains("show");
-  if (overlayOpen) {
-    // While a job is shown: Escape cancels a wait or closes a finished sheet;
-    // Enter closes a finished sheet.
-    const finished = /badge (ok|err)/.test($("sheet").innerHTML);
-    if (e.key === "Escape") {
-      e.preventDefault();
-      finished ? finish() : cancelJob();
-    } else if (e.key === "Enter" && finished) {
-      e.preventDefault();
-      finish();
-    }
-    return;
-  }
-  if (e.key === "Enter") {
-    e.preventDefault();
-    if (!$("go").disabled) start();
-  } else if (op !== "pay" && op !== "topup") {
-    return; // no amount to type (balance / refund)
-  } else if (e.key >= "0" && e.key <= "9") {
-    e.preventDefault();
-    press(e.key);
-  } else if (e.key === "Backspace") {
-    e.preventDefault();
-    press("<");
-  } else if (e.key === "Delete" || e.key === "Escape") {
-    e.preventDefault();
-    press("C");
-  }
-}
+      // ---- physical keyboard ----
+      // Mirror the on-screen keypad: digits type the amount, Backspace deletes, Enter
+      // runs the operation, Escape clears (or cancels/closes while the overlay is up).
+      function handleKeydown(e) {
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        if ($("infoOverlay").classList.contains("show")) {
+          if (e.key === "Escape" || e.key === "Enter") {
+            e.preventDefault();
+            closeInfo();
+          }
+          return;
+        }
+        const overlayOpen = $("overlay").classList.contains("show");
+        if (overlayOpen) {
+          // While a job is shown: Escape cancels a wait or closes a finished sheet;
+          // Enter closes a finished sheet.
+          const finished = /badge (ok|err)/.test($("sheet").innerHTML);
+          if (e.key === "Escape") {
+            e.preventDefault();
+            finished ? finish() : cancelJob();
+          } else if (e.key === "Enter" && finished) {
+            e.preventDefault();
+            finish();
+          }
+          return;
+        }
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (!$("go").disabled) start();
+        } else if (op !== "pay" && op !== "topup") {
+          return; // no amount to type (balance / refund)
+        } else if (e.key >= "0" && e.key <= "9") {
+          e.preventDefault();
+          press(e.key);
+        } else if (e.key === "Backspace") {
+          e.preventDefault();
+          press("<");
+        } else if (e.key === "Delete" || e.key === "Escape") {
+          e.preventDefault();
+          press("C");
+        }
+      }
 
-// ---- boot ----
-buildKeypad();
-setOp("pay");
-document.addEventListener("keydown", handleKeydown);
-</script>
-</body>
+      // ---- boot ----
+      buildKeypad();
+      setOp("pay");
+      document.addEventListener("keydown", handleKeydown);
+    </script>
+  </body>
 </html>
