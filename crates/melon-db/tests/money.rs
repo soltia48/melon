@@ -7,13 +7,17 @@
 use jiff::{Timestamp, tz::TimeZone};
 use melon_core::account::AccountKey;
 use melon_core::idi::Idi;
+use melon_core::idm::Idm;
 use melon_core::money::{PositiveYen, Yen};
 use melon_db::ops;
 use sqlx::PgPool;
 
+/// A fixed test IDm (cards in this deployment have a stable IDm).
+const IDM: [u8; 8] = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+
 /// A test account under system code 0x0003 with an IDi of repeated byte `n`.
 fn acct(n: u8) -> AccountKey {
-    AccountKey::new(0x0003, Idi::from_bytes([n; 8]))
+    AccountKey::new(0x0003, Idm::from_bytes(IDM), Idi::from_bytes([n; 8]))
 }
 
 fn ts(s: &str) -> Timestamp {
@@ -49,8 +53,9 @@ async fn top_up_then_balance(pool: PgPool) {
 async fn same_idi_different_system_codes_are_separate_accounts(pool: PgPool) {
     // Identical IDi bytes under two different FeliCa system codes.
     let idi = Idi::from_bytes([0x42; 8]);
-    let a3 = AccountKey::new(0x0003, idi);
-    let afe = AccountKey::new(0xFE00, idi);
+    let idm = Idm::from_bytes(IDM);
+    let a3 = AccountKey::new(0x0003, idm, idi);
+    let afe = AccountKey::new(0xFE00, idm, idi);
     let t0 = ts("2026-01-15T09:00:00+09:00");
     ops::top_up(&pool, a3, None, yen(1000), "k3", t0, &jst())
         .await

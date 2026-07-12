@@ -162,11 +162,11 @@ pub fn router(state: AppState) -> Router {
             post(handlers::admin_void),
         )
         .route(
-            "/v1/admin/accounts/{system_code}/{idi}/balance",
+            "/v1/admin/accounts/{system_code}/{idm}/{idi}/balance",
             get(handlers::admin_account_balance),
         )
         .route(
-            "/v1/admin/accounts/{system_code}/{idi}/adjust",
+            "/v1/admin/accounts/{system_code}/{idm}/{idi}/adjust",
             post(handlers::adjust_account),
         )
         .route("/v1/admin/expiry/sweep", post(handlers::sweep))

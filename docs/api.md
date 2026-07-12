@@ -1,6 +1,6 @@
 # HTTP API リファレンス
 
-すべて JSON。金額は整数円、IDi は 16 桁小文字 hex、System Code は hex(`0x0003`)/10 進(`3`)いずれも可。
+すべて JSON。金額は整数円、IDm / IDi は 16 桁小文字 hex、System Code は hex(`0x0003`)/10 進(`3`)いずれも可。管理者の口座キーは `(system_code, idm, idi)` の三つ組。
 
 ## 認証
 
@@ -65,20 +65,20 @@
 - `GET /admin` → 管理画面 SPA(HTML)
 - `GET /merchant` → 加盟店ポータル SPA(HTML)
 
-## 仮名化(加盟店は生の (System Code, IDi) を見られない)
+## 仮名化(加盟店は生の (System Code, IDm, IDi) を見られない)
 
 **加盟店には生のカード識別子を一切返しません。**代わりに **加盟店ごとに異なる仮名 ID(`account_id`, UUID v4)** を返します。
 
 - 同じカードでも**加盟店 A と加盟店 B では別の `account_id`**(結託しても名寄せ不可)。
 - 同一加盟店内では**不変**(リピーターを識別できる)。
 - `account_id` は**発行元の加盟店にのみ有効**(他店の ID を使うと 404)。
-- 生の `(system_code, idi)` を見られるのは**管理者(発行者)のみ**(`/v1/admin/*`)。
+- 生の `(system_code, idm, idi)` を見られるのは**管理者(発行者)のみ**(`/v1/admin/*`)。
 - 対応表は `merchant_account_aliases`(追記専用)。
 
 | 面 | 識別子 |
 |---|---|
 | 加盟店 API(`/v1/balance`, `/v1/transactions`, `/v1/payments/refundable`, 相互認証の完了応答) | `account_id`(仮名)のみ |
-| 管理者 API(`/v1/admin/*`) | `system_code` + `idi`(生値) |
+| 管理者 API(`/v1/admin/*`) | `system_code` + `idm` + `idi`(生値) |
 
 ## 相互認証(加盟店認証)
 
@@ -124,7 +124,7 @@
 { "transaction_id": "…", "bucket_id": "…", "amount": 1000,
   "expires_at": "2027-01-11T…Z", "balance": 1000, "replayed": false }
 ```
-`session_id` から検証済み `(system_code, idi)` を取得。加盟店の与信限度を超える場合は **422 `CREDIT_LIMIT_EXCEEDED`**。
+`session_id` から検証済み `(system_code, idm, idi)` を取得。加盟店の与信限度を超える場合は **422 `CREDIT_LIMIT_EXCEEDED`**。
 
 ### `POST /v1/payments`  — 支払い
 本文: `{ "session_id": "…", "amount": 300 }` → **201**
@@ -212,26 +212,26 @@
 
 ### `GET /v1/admin/accounts?limit=`
 ```json
-[ { "system_code": 3, "idi": "…", "status": "active", "balance": 700, "created_at": "…Z" } ]
+[ { "system_code": 3, "idm": "…", "idi": "…", "status": "active", "balance": 700, "created_at": "…Z" } ]
 ```
 
-### `GET /v1/admin/accounts/{system_code}/{idi}/balance`
-残高内訳(管理者は生の `system_code`/`idi` 付き)。
+### `GET /v1/admin/accounts/{system_code}/{idm}/{idi}/balance`
+残高内訳(管理者は生の `system_code`/`idm`/`idi` 付き)。
 
-### `POST /v1/admin/accounts/{system_code}/{idi}/adjust` — 利用者残高の調整
+### `POST /v1/admin/accounts/{system_code}/{idm}/{idi}/adjust` — 利用者残高の調整
 本文: `{ "delta": 500, "reason": "補償" }` → `{ "transaction_id":"…","delta":500,"balance":…,"bucket_id":"…" }`
 入金は新 6ヶ月バケット、引落は期限が近い順に消費(残高不足は 422)。
 
-### `GET /v1/admin/transactions?merchant_id=&system_code=&idi=&kind=&before=&limit=`
-`TxnResp` 配列。`idi` で絞る場合は `system_code` も必須(組で一意)。
+### `GET /v1/admin/transactions?merchant_id=&system_code=&idm=&idi=&kind=&before=&limit=`
+`TxnResp` 配列。口座で絞る場合は `system_code`・`idm`・`idi` をすべて指定(三つ組で一意)。
 
 ```json
-{ "id":"…","system_code":3,"idi":"…","kind":"payment","merchant_id":"…",
+{ "id":"…","system_code":3,"idm":"…","idi":"…","kind":"payment","merchant_id":"…",
   "amount":300,"fee":4,"related_txn_id":null,"occurred_at":"…Z" }
 ```
 
-### `GET /v1/admin/refundable?merchant_id=&system_code=&idi=&limit=` — 返金可能な支払い
-任意の加盟店/口座で絞り込める返金可能一覧(`idi` は `system_code` と組で指定)。応答は**生の `system_code`/`idi` 付き**(管理者のみ)。
+### `GET /v1/admin/refundable?merchant_id=&system_code=&idm=&idi=&limit=` — 返金可能な支払い
+任意の加盟店/口座で絞り込める返金可能一覧(口座で絞る場合は `system_code`・`idm`・`idi` をすべて指定)。応答は**生の `system_code`/`idm`/`idi` 付き**(管理者のみ)。
 
 ### `POST /v1/admin/refunds` / `POST /v1/admin/payments/{id}/void` — 任意の支払いの返金/取消
 加盟店の所有者チェックなしで任意の支払いを返金/取消(応答は加盟店版と同形、`Idempotency-Key` 必須)。

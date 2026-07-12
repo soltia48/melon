@@ -428,34 +428,37 @@ async function renderTransactions() {
         <div class="row">
           <div class="field"><label>種別</label><select id="tKind">${KINDS.map(k => `<option value="${k}">${k || "すべて"}</option>`).join("")}</select></div>
           <div class="field"><label>System Code</label><input id="tSc" class="mono" placeholder="任意 (例 0x0003)" style="width:130px"></div>
+          <div class="field"><label>IDm(16桁hex)</label><input id="tIdm" class="mono" placeholder="任意"></div>
           <div class="field"><label>IDi(16桁hex)</label><input id="tIdi" class="mono" placeholder="任意"></div>
           <div class="field"><label>件数</label><input id="tLimit" type="number" value="50" min="1" max="500" style="width:90px"></div>
           <button class="primary" onclick="loadTransactions()">検索</button>
         </div>
-        <p class="muted" style="margin:8px 0 0">IDi で絞り込む場合は System Code も指定してください(組で一意)。</p>
+        <p class="muted" style="margin:8px 0 0">口座で絞り込む場合は System Code・IDm・IDi をすべて指定してください(三つ組で一意)。</p>
       </div>
       <div class="panel"><div id="tResult" class="table-wrap"></div></div>`;
   }
   loadTransactions();
 }
 async function loadTransactions() {
-  const kind = $("tKind").value, sc = $("tSc").value.trim(), idi = $("tIdi").value.trim(), limit = $("tLimit").value || 50;
+  const kind = $("tKind").value, sc = $("tSc").value.trim(), idm = $("tIdm").value.trim(), idi = $("tIdi").value.trim(), limit = $("tLimit").value || 50;
   const qs = new URLSearchParams({ limit });
   if (kind) qs.set("kind", kind);
   if (sc) qs.set("system_code", sc);
+  if (idm) qs.set("idm", idm);
   if (idi) qs.set("idi", idi);
   const box = $("tResult"); box.innerHTML = `<div class="muted">読み込み中…</div>`;
   try {
     const list = await api("GET", "/v1/admin/transactions?" + qs);
     if (!list.length) { box.innerHTML = `<div class="empty">該当する取引がありません</div>`; return; }
     box.innerHTML = `<table>
-      <thead><tr><th>日時</th><th>種別</th><th>System</th><th>IDi</th><th class="num">金額</th><th>加盟店</th></tr></thead>
+      <thead><tr><th>日時</th><th>種別</th><th>System</th><th>IDm</th><th>IDi</th><th class="num">金額</th><th>加盟店</th></tr></thead>
       <tbody>${list.map(t => {
         const sign = (t.kind === "payment" || t.kind === "expiry") ? "neg" : "pos";
         return `<tr>
           <td class="muted">${fmtTime(t.occurred_at)}</td>
           <td class="kind">${esc(t.kind)}</td>
           <td class="mono">${scHex(t.system_code)}</td>
+          <td class="mono">${esc(t.idm)}</td>
           <td class="mono">${esc(t.idi)}</td>
           <td class="num ${sign}">${yen(t.amount)}</td>
           <td class="mono muted">${t.merchant_id ? esc(t.merchant_id).slice(0, 8) + "…" : "—"}</td>
@@ -469,39 +472,41 @@ async function renderAccounts() {
   el.innerHTML = `<div class="panel"><div class="muted">読み込み中…</div></div><div id="acctDetail"></div>`;
   const list = await api("GET", "/v1/admin/accounts");
   const rows = list.length ? list.map(a => `
-      <tr style="cursor:pointer" onclick="selectAccount(${a.system_code}, '${esc(a.idi)}')">
+      <tr style="cursor:pointer" onclick="selectAccount(${a.system_code}, '${esc(a.idm)}', '${esc(a.idi)}')">
         <td class="mono">${scHex(a.system_code)}</td>
+        <td class="mono">${esc(a.idm)}</td>
         <td class="mono">${esc(a.idi)}</td>
         <td><span class="pill ${esc(a.status)}">${esc(a.status)}</span></td>
         <td class="num">${yen(a.balance)}</td>
         <td class="muted">${fmtTime(a.created_at)}</td>
-      </tr>`).join("") : `<tr><td colspan="5" class="empty">利用者がいません</td></tr>`;
+      </tr>`).join("") : `<tr><td colspan="6" class="empty">利用者がいません</td></tr>`;
   el.innerHTML = `
     <div class="panel">
-      <h2>利用者一覧(${list.length}) <span class="muted" style="font-weight:400">行を選択して残高を確認・編集(System Code と IDi の組で識別)</span></h2>
+      <h2>利用者一覧(${list.length}) <span class="muted" style="font-weight:400">行を選択して残高を確認・編集(System Code・IDm・IDi の三つ組で識別)</span></h2>
       <div class="row" style="margin-bottom:12px">
         <div class="field"><label>System Code</label><input id="acctLookupSc" class="mono" placeholder="0x0003" style="width:110px"></div>
-        <div class="field"><label>IDi(16桁hex)</label><input id="acctLookupIdi" class="mono" placeholder="0102030405060708"
-          onkeydown="if(event.key==='Enter')selectAccount($('acctLookupSc').value.trim(), this.value.trim())"></div>
-        <button onclick="selectAccount($('acctLookupSc').value.trim(), $('acctLookupIdi').value.trim())">照会</button>
+        <div class="field"><label>IDm(16桁hex)</label><input id="acctLookupIdm" class="mono" placeholder="0102030405060708"></div>
+        <div class="field"><label>IDi(16桁hex)</label><input id="acctLookupIdi" class="mono" placeholder="1122334455667788"
+          onkeydown="if(event.key==='Enter')selectAccount($('acctLookupSc').value.trim(), $('acctLookupIdm').value.trim(), this.value.trim())"></div>
+        <button onclick="selectAccount($('acctLookupSc').value.trim(), $('acctLookupIdm').value.trim(), $('acctLookupIdi').value.trim())">照会</button>
       </div>
       <div class="table-wrap"><table>
-        <thead><tr><th>System</th><th>IDi</th><th>状態</th><th class="num">残高</th><th>作成日時</th></tr></thead>
+        <thead><tr><th>System</th><th>IDm</th><th>IDi</th><th>状態</th><th class="num">残高</th><th>作成日時</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
     </div>
     <div id="acctDetail"></div>`;
 }
-async function selectAccount(sc, idi) {
-  if (sc === "" || sc === undefined || !idi) return;
+async function selectAccount(sc, idm, idi) {
+  if (sc === "" || sc === undefined || !idm || !idi) return;
   const box = $("acctDetail");
   box.innerHTML = `<div class="panel muted">読み込み中…</div>`;
-  const scPath = encodeURIComponent(sc), idiPath = encodeURIComponent(idi);
+  const scPath = encodeURIComponent(sc), idmPath = encodeURIComponent(idm), idiPath = encodeURIComponent(idi);
   try {
     const [bal, txns, refundable] = await Promise.all([
-      api("GET", `/v1/admin/accounts/${scPath}/${idiPath}/balance`),
-      api("GET", `/v1/admin/transactions?limit=20&system_code=${scPath}&idi=${idiPath}`),
-      api("GET", `/v1/admin/refundable?limit=20&system_code=${scPath}&idi=${idiPath}`),
+      api("GET", `/v1/admin/accounts/${scPath}/${idmPath}/${idiPath}/balance`),
+      api("GET", `/v1/admin/transactions?limit=20&system_code=${scPath}&idm=${idmPath}&idi=${idiPath}`),
+      api("GET", `/v1/admin/refundable?limit=20&system_code=${scPath}&idm=${idmPath}&idi=${idiPath}`),
     ]);
     const buckets = bal.buckets.length ? bal.buckets.map(b => `
         <tr><td class="mono muted">${esc(b.bucket_id).slice(0, 8)}…</td>
@@ -516,13 +521,13 @@ async function selectAccount(sc, idi) {
       `<tr><td class="muted">${fmtTime(p.occurred_at)}</td>
         <td class="num">${yen(p.amount)}</td><td class="num">${yen(p.refundable)}</td>
         <td style="text-align:right;white-space:nowrap">
-          <button class="sm" onclick="adminRefund('${esc(p.id)}', ${p.refundable}, ${bal.system_code}, '${esc(bal.idi)}')">返金</button>
-          <button class="sm" onclick="adminVoid('${esc(p.id)}', ${bal.system_code}, '${esc(bal.idi)}')">取消</button>
+          <button class="sm" onclick="adminRefund('${esc(p.id)}', ${p.refundable}, ${bal.system_code}, '${esc(bal.idm)}', '${esc(bal.idi)}')">返金</button>
+          <button class="sm" onclick="adminVoid('${esc(p.id)}', ${bal.system_code}, '${esc(bal.idm)}', '${esc(bal.idi)}')">取消</button>
         </td></tr>`).join("")
       : `<tr><td colspan="4" class="empty">返金可能な支払いなし</td></tr>`;
     box.innerHTML = `
       <div class="panel">
-        <h2>利用者詳細 <span class="mono" style="font-weight:400">${scHex(bal.system_code)} : ${esc(bal.idi)}</span></h2>
+        <h2>利用者詳細 <span class="mono" style="font-weight:400">${scHex(bal.system_code)} / ${esc(bal.idm)} : ${esc(bal.idi)}</span></h2>
         <div class="cards" style="margin-bottom:16px">
           <div class="stat"><div class="label">利用可能残高</div><div class="value">${yen(bal.total)}</div></div>
         </div>
@@ -532,7 +537,7 @@ async function selectAccount(sc, idi) {
             <select id="adjSign"><option value="1">入金(credit)</option><option value="-1">引落(debit)</option></select></div>
           <div class="field"><label>金額(円)</label><input id="adjAmount" type="number" min="1" placeholder="1000"></div>
           <div class="field" style="flex:1;min-width:160px"><label>理由</label><input id="adjReason" placeholder="調整理由(任意)"></div>
-          <button class="primary" onclick="submitAdjust(${bal.system_code}, '${esc(bal.idi)}', this)">適用</button>
+          <button class="primary" onclick="submitAdjust(${bal.system_code}, '${esc(bal.idm)}', '${esc(bal.idi)}', this)">適用</button>
         </div>
         <p class="muted" style="margin:0 0 18px">入金は新しい 6ヶ月バケットを作成、引落は期限が近い順に消費(残高不足は不可)。</p>
         <h3 style="font-size:13px;margin-bottom:8px">返金可能な支払い</h3>
@@ -550,20 +555,20 @@ async function selectAccount(sc, idi) {
       </div>`;
   } catch (e) { box.innerHTML = `<div class="panel empty">${esc(e.message)}</div>`; }
 }
-async function submitAdjust(sc, idi, btn) {
+async function submitAdjust(sc, idm, idi, btn) {
   const sign = parseInt($("adjSign").value, 10);
   const amount = parseInt($("adjAmount").value, 10);
   const reason = $("adjReason").value.trim();
   if (!amount || amount <= 0) return toast("金額を入力してください");
   btn.disabled = true;
   try {
-    const r = await api("POST", `/v1/admin/accounts/${encodeURIComponent(sc)}/${encodeURIComponent(idi)}/adjust`,
+    const r = await api("POST", `/v1/admin/accounts/${encodeURIComponent(sc)}/${encodeURIComponent(idm)}/${encodeURIComponent(idi)}/adjust`,
       { delta: sign * amount, reason: reason || null });
     toast(`調整完了: 残高 ${yen(r.balance)}`);
-    selectAccount(sc, idi);
+    selectAccount(sc, idm, idi);
   } catch (e) { toast(e.message); } finally { btn.disabled = false; }
 }
-async function adminRefund(paymentId, refundable, sc, idi) {
+async function adminRefund(paymentId, refundable, sc, idm, idi) {
   const input = prompt(`返金額(円)。空欄で全額(${refundable})を返金します。`);
   if (input === null) return;
   const amount = input.trim() === "" ? null : parseInt(input, 10);
@@ -571,15 +576,15 @@ async function adminRefund(paymentId, refundable, sc, idi) {
   try {
     const r = await api("POST", "/v1/admin/refunds", { payment_id: paymentId, amount });
     toast(`返金しました: ${yen(r.amount)}`);
-    selectAccount(sc, idi);
+    selectAccount(sc, idm, idi);
   } catch (e) { toast(e.message); }
 }
-async function adminVoid(paymentId, sc, idi) {
+async function adminVoid(paymentId, sc, idm, idi) {
   if (!confirm("この支払いを全額取消しますか?")) return;
   try {
     const r = await api("POST", `/v1/admin/payments/${encodeURIComponent(paymentId)}/void`);
     toast(`取消しました: ${yen(r.amount)}`);
-    selectAccount(sc, idi);
+    selectAccount(sc, idm, idi);
   } catch (e) { toast(e.message); }
 }
 

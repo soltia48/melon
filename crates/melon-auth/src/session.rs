@@ -163,22 +163,26 @@ impl SessionManager {
         self.keystore.system_codes()
     }
 
-    /// The card-verified account `(system_code, idi)` for a session that
+    /// The card-verified account `(system_code, idm, idi)` for a session that
     /// completed mutual authentication, or `None` if unknown or not yet
-    /// authenticated.
-    pub fn authenticated_account(&self, session_id: &str) -> Option<(u16, [u8; 8])> {
+    /// authenticated. The IDm is the one the terminal presented for the chosen
+    /// system at polling time.
+    pub fn authenticated_account(&self, session_id: &str) -> Option<(u16, [u8; 8], [u8; 8])> {
         let session = self.sessions.lock().unwrap().get(session_id).cloned()?;
         let idi = (*session.idi.lock().unwrap())?;
         let system_code = (*session.system_code.lock().unwrap())?;
-        Some((system_code, idi))
+        Some((system_code, session.idm, idi))
     }
 
     /// Atomically claim the one-shot spend capability of an authenticated
-    /// session, returning the verified account `(system_code, idi)` exactly
+    /// session, returning the verified account `(system_code, idm, idi)` exactly
     /// once. A second claim (or a claim on an unauthenticated/unknown session)
     /// is refused. This binds each money operation to a real, fresh
     /// authentication and prevents replaying a captured `session_id`.
-    pub fn consume_spend(&self, session_id: &str) -> Result<(u16, [u8; 8]), ProtocolError> {
+    pub fn consume_spend(
+        &self,
+        session_id: &str,
+    ) -> Result<(u16, [u8; 8], [u8; 8]), ProtocolError> {
         let session = self.get_session(session_id)?;
         let idi = (*session.idi.lock().unwrap())
             .ok_or_else(|| ProtocolError::forbidden("session is not authenticated"))?;
@@ -191,7 +195,7 @@ impl SessionManager {
             ));
         }
         *consumed = true;
-        Ok((system_code, idi))
+        Ok((system_code, session.idm, idi))
     }
 
     fn get_session(&self, session_id: &str) -> Result<Arc<Session>, ProtocolError> {

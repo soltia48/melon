@@ -356,6 +356,7 @@ async fn end_to_end_auth_topup_pay_balance(pool: PgPool) {
     assert!(kinds.contains(&"top_up"));
 
     // The ¥300 payment is refundable; the merchant's kiosk endpoint lists it.
+    let idm_hex = hex::encode(IDM);
     let idi_hex = hex::encode(ISSUE_ID);
     let (status, v) = send(
         &app,
@@ -391,7 +392,7 @@ async fn end_to_end_auth_topup_pay_balance(pool: PgPool) {
     let (_, v) = send(
         &app,
         "GET",
-        &format!("/v1/admin/refundable?system_code=0x0003&idi={idi_hex}"),
+        &format!("/v1/admin/refundable?system_code=0x0003&idm={idm_hex}&idi={idi_hex}"),
         Some(&admin),
         None,
         Value::Null,

@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use melon_core::account::AccountKey;
 use melon_core::idi::Idi;
+use melon_core::idm::Idm;
 use melon_core::money::PositiveYen;
 use melon_db::ops;
 
@@ -55,6 +56,36 @@ fn parse_idi(s: &str) -> Result<Idi, ApiError> {
     s.trim()
         .parse()
         .map_err(|_| ApiError::bad_request("invalid idi (expected 16 hex characters)"))
+}
+
+fn parse_idm(s: &str) -> Result<Idm, ApiError> {
+    s.trim()
+        .parse()
+        .map_err(|_| ApiError::bad_request("invalid idm (expected 16 hex characters)"))
+}
+
+/// Parse an optional account filter from query strings. The account key is the
+/// full `(system_code, idm, idi)` triple, so either all three are supplied or
+/// none are.
+fn parse_account_filter(
+    system_code: Option<&str>,
+    idm: Option<&str>,
+    idi: Option<&str>,
+) -> Result<Option<AccountKey>, ApiError> {
+    let sc = system_code.filter(|s| !s.is_empty());
+    let idm = idm.filter(|s| !s.is_empty());
+    let idi = idi.filter(|s| !s.is_empty());
+    match (sc, idm, idi) {
+        (Some(sc), Some(idm), Some(idi)) => Ok(Some(AccountKey::new(
+            parse_sc(sc)?,
+            parse_idm(idm)?,
+            parse_idi(idi)?,
+        ))),
+        (None, None, None) => Ok(None),
+        _ => Err(ApiError::bad_request(
+            "filter by account requires system_code, idm and idi",
+        )),
+    }
 }
 
 /// Parse a system code accepting a `0x` hex prefix or decimal.
@@ -451,11 +482,11 @@ pub async fn mutual_authentication(
         let session_id = request_session
             .or_else(|| value["session_id"].as_str().map(str::to_string))
             .ok_or_else(|| ApiError::internal("authenticated session id missing"))?;
-        let (sc, idi) = state
+        let (sc, idm, idi) = state
             .manager
             .authenticated_account(&session_id)
             .ok_or_else(|| ApiError::internal("authenticated session not found"))?;
-        let account = AccountKey::new(sc, Idi::from_bytes(idi));
+        let account = AccountKey::new(sc, Idm::from_bytes(idm), Idi::from_bytes(idi));
         let account_id = ops::alias_for(&state.pool, merchant.merchant_id, account).await?;
         value["result"] = serde_json::json!({ "account_id": account_id });
     }
@@ -516,6 +547,7 @@ pub struct BalanceResp {
 #[derive(Serialize)]
 pub struct AdminBalanceResp {
     pub system_code: u16,
+    pub idm: String,
     pub idi: String,
     pub total: i64,
     pub buckets: Vec<BucketView>,
@@ -524,6 +556,7 @@ pub struct AdminBalanceResp {
 fn admin_balance_resp(account: AccountKey, bal: ops::BalanceBreakdown) -> AdminBalanceResp {
     AdminBalanceResp {
         system_code: account.system_code,
+        idm: account.idm.to_hex(),
         idi: account.idi.to_hex(),
         total: bal.total.as_i64(),
         buckets: bucket_views(bal),
@@ -535,11 +568,11 @@ pub async fn balance(
     merchant: AuthedMerchant,
     Json(req): Json<BalanceReq>,
 ) -> Result<Json<BalanceResp>, ApiError> {
-    let (sc, idi) = state
+    let (sc, idm, idi) = state
         .manager
         .authenticated_account(&req.session_id)
         .ok_or_else(|| ApiError::forbidden("session is not authenticated"))?;
-    let account = AccountKey::new(sc, Idi::from_bytes(idi));
+    let account = AccountKey::new(sc, Idm::from_bytes(idm), Idi::from_bytes(idi));
     let account_id = ops::alias_for(&state.pool, merchant.merchant_id, account).await?;
     let bal = ops::balance(&state.pool, account, now()).await?;
     Ok(Json(BalanceResp {
@@ -575,8 +608,8 @@ pub async fn topup(
 ) -> Result<(StatusCode, Json<TopupResp>), ApiError> {
     let key = idempotency_key(&headers)?;
     let amount = positive(req.amount)?;
-    let (sc, idi) = state.manager.consume_spend(&req.session_id)?;
-    let account = AccountKey::new(sc, Idi::from_bytes(idi));
+    let (sc, idm, idi) = state.manager.consume_spend(&req.session_id)?;
+    let account = AccountKey::new(sc, Idm::from_bytes(idm), Idi::from_bytes(idi));
     let out = ops::top_up(
         &state.pool,
         account,
@@ -635,8 +668,8 @@ pub async fn pay(
 ) -> Result<(StatusCode, Json<PayResp>), ApiError> {
     let key = idempotency_key(&headers)?;
     let amount = positive(req.amount)?;
-    let (sc, idi) = state.manager.consume_spend(&req.session_id)?;
-    let account = AccountKey::new(sc, Idi::from_bytes(idi));
+    let (sc, idm, idi) = state.manager.consume_spend(&req.session_id)?;
+    let account = AccountKey::new(sc, Idm::from_bytes(idm), Idi::from_bytes(idi));
     let out = ops::pay(
         &state.pool,
         account,
@@ -748,6 +781,7 @@ pub struct RefundableView {
 pub struct AdminRefundableView {
     pub id: Uuid,
     pub system_code: u16,
+    pub idm: String,
     pub idi: String,
     pub merchant_id: Option<Uuid>,
     pub amount: i64,
@@ -761,6 +795,7 @@ fn admin_refundable_view(p: ops::RefundablePayment) -> AdminRefundableView {
     AdminRefundableView {
         id: p.id,
         system_code: p.account.system_code,
+        idm: p.account.idm.to_hex(),
         idi: p.account.idi.to_hex(),
         merchant_id: p.merchant_id,
         amount: p.amount.as_i64(),
@@ -843,6 +878,7 @@ pub struct TxnResp {
 pub struct AdminTxnResp {
     pub id: Uuid,
     pub system_code: u16,
+    pub idm: String,
     pub idi: String,
     pub kind: String,
     pub merchant_id: Option<Uuid>,
@@ -888,6 +924,7 @@ fn admin_txn_view(t: ops::TransactionRow) -> AdminTxnResp {
     AdminTxnResp {
         id: t.id,
         system_code: t.account.system_code,
+        idm: t.account.idm.to_hex(),
         idi: t.account.idi.to_hex(),
         kind: t.kind,
         merchant_id: t.merchant_id,
@@ -903,6 +940,7 @@ fn admin_txn_view(t: ops::TransactionRow) -> AdminTxnResp {
 pub struct AdminTxnQuery {
     pub merchant_id: Option<Uuid>,
     pub system_code: Option<String>,
+    pub idm: Option<String>,
     pub idi: Option<String>,
     pub kind: Option<String>,
     pub before: Option<String>,
@@ -914,19 +952,10 @@ pub async fn admin_transactions(
     _admin: AdminUser,
     Query(q): Query<AdminTxnQuery>,
 ) -> Result<Json<Vec<AdminTxnResp>>, ApiError> {
-    let sc = q.system_code.as_deref().filter(|s| !s.is_empty());
-    let idi = q.idi.as_deref().filter(|s| !s.is_empty());
-    // Filtering by account requires both system_code and IDi (an IDi alone is
-    // ambiguous across systems).
-    let account = match (sc, idi) {
-        (Some(sc), Some(idi)) => Some(AccountKey::new(parse_sc(sc)?, parse_idi(idi)?)),
-        (Some(_), None) | (None, Some(_)) => {
-            return Err(ApiError::bad_request(
-                "filter by account requires both system_code and idi",
-            ));
-        }
-        (None, None) => None,
-    };
+    // Filtering by account requires the full (system_code, IDm, IDi) key — an IDi
+    // alone is ambiguous across systems, and the account key includes the IDm.
+    let account =
+        parse_account_filter(q.system_code.as_deref(), q.idm.as_deref(), q.idi.as_deref())?;
     let before = q
         .before
         .as_deref()
@@ -944,13 +973,13 @@ pub async fn admin_transactions(
     Ok(Json(rows.into_iter().map(admin_txn_view).collect()))
 }
 
-/// Admin lookup of any account's balance by (system_code, IDi).
+/// Admin lookup of any account's balance by (system_code, IDm, IDi).
 pub async fn admin_account_balance(
     State(state): State<AppState>,
     _admin: AdminUser,
-    Path((system_code, idi)): Path<(String, String)>,
+    Path((system_code, idm, idi)): Path<(String, String, String)>,
 ) -> Result<Json<AdminBalanceResp>, ApiError> {
-    let account = AccountKey::new(parse_sc(&system_code)?, parse_idi(&idi)?);
+    let account = AccountKey::new(parse_sc(&system_code)?, parse_idm(&idm)?, parse_idi(&idi)?);
     let bal = ops::balance(&state.pool, account, now()).await?;
     Ok(Json(admin_balance_resp(account, bal)))
 }
@@ -965,6 +994,7 @@ pub struct AccountsQuery {
 #[derive(Serialize)]
 pub struct AccountView {
     pub system_code: u16,
+    pub idm: String,
     pub idi: String,
     pub status: String,
     pub balance: i64,
@@ -981,6 +1011,7 @@ pub async fn list_accounts(
         rows.into_iter()
             .map(|a| AccountView {
                 system_code: a.account.system_code,
+                idm: a.account.idm.to_hex(),
                 idi: a.account.idi.to_hex(),
                 status: a.status,
                 balance: a.balance.as_i64(),
@@ -1008,10 +1039,10 @@ pub struct AdjustResp {
 pub async fn adjust_account(
     State(state): State<AppState>,
     _admin: AdminUser,
-    Path((system_code, idi)): Path<(String, String)>,
+    Path((system_code, idm, idi)): Path<(String, String, String)>,
     Json(req): Json<AdjustReq>,
 ) -> Result<Json<AdjustResp>, ApiError> {
-    let account = AccountKey::new(parse_sc(&system_code)?, parse_idi(&idi)?);
+    let account = AccountKey::new(parse_sc(&system_code)?, parse_idm(&idm)?, parse_idi(&idi)?);
     if req.delta == 0 {
         return Err(ApiError::bad_request("delta must be non-zero"));
     }
@@ -1039,6 +1070,7 @@ pub async fn adjust_account(
 pub struct AdminRefundableQuery {
     pub merchant_id: Option<Uuid>,
     pub system_code: Option<String>,
+    pub idm: Option<String>,
     pub idi: Option<String>,
     pub limit: Option<i64>,
 }
@@ -1048,17 +1080,8 @@ pub async fn admin_refundable(
     _admin: AdminUser,
     Query(q): Query<AdminRefundableQuery>,
 ) -> Result<Json<Vec<AdminRefundableView>>, ApiError> {
-    let sc = q.system_code.as_deref().filter(|s| !s.is_empty());
-    let idi = q.idi.as_deref().filter(|s| !s.is_empty());
-    let account = match (sc, idi) {
-        (Some(sc), Some(idi)) => Some(AccountKey::new(parse_sc(sc)?, parse_idi(idi)?)),
-        (Some(_), None) | (None, Some(_)) => {
-            return Err(ApiError::bad_request(
-                "filter by account requires both system_code and idi",
-            ));
-        }
-        (None, None) => None,
-    };
+    let account =
+        parse_account_filter(q.system_code.as_deref(), q.idm.as_deref(), q.idi.as_deref())?;
     let rows =
         ops::list_refundable_payments(&state.pool, q.merchant_id, account, q.limit.unwrap_or(50))
             .await?;

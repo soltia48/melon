@@ -2,9 +2,10 @@
 
 ## アカウント(利用者)
 
-- アカウントは **`(System Code, IDi)` の複合キー**で識別します。IDi(8 バイトの発行 ID)は FeliCa システム内でのみ一意であり、同一カードでもシステムごとに異なる IDi を持つため、IDi 単独ではキーになりません。
-- 口座を持つ全テーブル(`accounts` / `transactions` / `topup_buckets` / `ledger_entries`)が `system_code`(INTEGER, 0〜65535)+ `idi`(BYTEA, 8 バイト)を持ち、複合 PK / FK で参照します。
-- system_code は認証時に端末が指定したものが採用され、その IDi と組でアカウントになります。
+- アカウントは **`(System Code, IDm, IDi)` の複合キー**で識別します(この順序でキーを構成)。IDi(8 バイトの発行 ID)は FeliCa システム内でのみ一意であり、同一カードでもシステムごとに異なる IDi を持つため、IDi 単独ではキーになりません。
+- **IDm**(8 バイトの製造 ID)もキーに含めます。IDm はポーリング時に平文で得られる識別子で、カードによってはランダム化されますが、**本デプロイのカードは IDm が固定**であることを前提とします(ランダム化される IDm では毎回別口座に見えてしまうため不可)。
+- 口座を持つ全テーブル(`accounts` / `transactions` / `topup_buckets` / `ledger_entries`)が `system_code`(INTEGER, 0〜65535)+ `idm`(BYTEA, 8 バイト)+ `idi`(BYTEA, 8 バイト)を持ち、`(system_code, idm, idi)` の複合 PK / FK で参照します。
+- system_code と IDm は認証時に端末が指定・提示したものが採用され、認証完了後の検証済み IDi と組でアカウントになります。
 - `accounts.status`: `active` / `frozen` / `closed`。
 
 ## 金額
@@ -142,13 +143,13 @@
 
 ## 仮名化(加盟店に生のカード識別子を見せない)
 
-加盟店は**生の `(system_code, idi)` を一切見られません**。代わりに **加盟店ごとの仮名 ID `account_id`(UUID v4)** を見ます。
+加盟店は**生の `(system_code, idm, idi)` を一切見られません**。代わりに **加盟店ごとの仮名 ID `account_id`(UUID v4)** を見ます。
 
-- テーブル **`merchant_account_aliases`**(`0008`、追記専用): `(merchant_id, system_code, idi) → alias`。初回認証時に発行し、以後不変。
+- テーブル **`merchant_account_aliases`**(`0008`、追記専用): `(merchant_id, system_code, idm, idi) → alias`。初回認証時に発行し、以後不変。
 - **同一加盟店では不変**(リピーターを識別可能)、**加盟店をまたぐと別 ID**(加盟店同士が結託しても同一人物を名寄せできない)。
 - `account_id` は**発行元の加盟店にのみ有効**(他店の ID で照会すると 404)。
 - 相互認証の完了応答は `result.issue_id`(生 IDi)ではなく `result.account_id` を返す。
-- 対応表を持つのは**発行者のみ**。管理者 API/画面は従来どおり生の `(system_code, idi)` を扱う。
+- 対応表を持つのは**発行者のみ**。管理者 API/画面は従来どおり生の `(system_code, idm, idi)` を扱う。
 - UUID は **v4**(v7 は生成時刻が漏れるため不採用)。
 
 ## 冪等性
@@ -169,5 +170,5 @@
 ## 未使用残高レポート(資金決済法)
 
 - 基準日(例: 3/31・9/30 JST)時点の未使用残高集計。`GET /v1/admin/reports/outstanding-balance?as_of=`。
-- 内容: 総額(`expires_at > as_of` かつ `remaining > 0`)、口座数(`(system_code, idi)` の distinct)、失効月別内訳(JST)。
+- 内容: 総額(`expires_at > as_of` かつ `remaining > 0`)、口座数(`(system_code, idm, idi)` の distinct)、失効月別内訳(JST)。
 - 有効期間 6ヶ月以内の前払式支払手段は供託・登録義務等の適用除外を狙う設計(法4条2号、施行令4条2項の趣旨)。**最終判断は要法務レビュー。**

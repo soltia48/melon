@@ -174,16 +174,16 @@ async fn full_mutual_authentication_and_secure_read() {
 async fn authenticated_idi_is_exposed_and_spend_is_one_shot() {
     let (manager, _card, session_id) = authenticate(None).await;
 
-    // The verified account is (system_code, issue_id) of the emulated card.
+    // The verified account is (system_code, idm, issue_id) of the emulated card.
     assert_eq!(
         manager.authenticated_account(&session_id),
-        Some((SYSTEM_CODE, ISSUE_ID))
+        Some((SYSTEM_CODE, IDM, ISSUE_ID))
     );
 
     // The spend capability yields the account exactly once...
     assert_eq!(
         manager.consume_spend(&session_id).unwrap(),
-        (SYSTEM_CODE, ISSUE_ID)
+        (SYSTEM_CODE, IDM, ISSUE_ID)
     );
     // ...and refuses a second claim (defeats session_id replay).
     assert_eq!(manager.consume_spend(&session_id).unwrap_err().status, 403);

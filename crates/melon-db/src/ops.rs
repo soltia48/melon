@@ -16,11 +16,21 @@ use uuid::Uuid;
 use melon_core::account::AccountKey;
 use melon_core::expiry;
 use melon_core::idi::Idi;
+use melon_core::idm::Idm;
 use melon_core::money::{PositiveYen, Yen};
 use melon_core::payment::{Deduction, SpendableBucket, plan_consumption};
 
 use crate::conv::{to_jiff, to_odt};
 use crate::{DbError, Pool};
+
+/// Reconstruct an [`AccountKey`] from a row exposing `idm`, `system_code`, `idi`.
+fn account_from_row(r: &sqlx::postgres::PgRow) -> Result<AccountKey, DbError> {
+    Ok(AccountKey::new(
+        r.try_get::<i32, _>("system_code")? as u16,
+        Idm::from_slice(&r.try_get::<Vec<u8>, _>("idm")?).map_err(|_| DbError::AccountNotFound)?,
+        Idi::from_slice(&r.try_get::<Vec<u8>, _>("idi")?).map_err(|_| DbError::AccountNotFound)?,
+    ))
+}
 
 /// One active bucket in a balance breakdown (soonest-expiry-first).
 #[derive(Debug, Clone)]
@@ -72,6 +82,7 @@ pub async fn alias_for(
     account: AccountKey,
 ) -> Result<Uuid, DbError> {
     let sc = account.system_code as i32;
+    let idm = account.idm.as_bytes().as_slice();
     let idi = account.idi.as_bytes().as_slice();
 
     let mut tx = pool.begin().await?;
@@ -80,14 +91,15 @@ pub async fn alias_for(
     ensure_account(&mut tx, account).await?;
 
     let inserted: Option<Uuid> = sqlx::query_scalar(
-        "INSERT INTO merchant_account_aliases (alias, merchant_id, system_code, idi)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (merchant_id, system_code, idi) DO NOTHING
+        "INSERT INTO merchant_account_aliases (alias, merchant_id, system_code, idm, idi)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (merchant_id, system_code, idm, idi) DO NOTHING
          RETURNING alias",
     )
     .bind(Uuid::new_v4()) // v4: opaque (v7 would leak the creation time)
     .bind(merchant_id)
     .bind(sc)
+    .bind(idm)
     .bind(idi)
     .fetch_optional(&mut *tx)
     .await?;
@@ -98,10 +110,11 @@ pub async fn alias_for(
         None => {
             sqlx::query_scalar(
                 "SELECT alias FROM merchant_account_aliases
-              WHERE merchant_id = $1 AND system_code = $2 AND idi = $3",
+              WHERE merchant_id = $1 AND system_code = $2 AND idm = $3 AND idi = $4",
             )
             .bind(merchant_id)
             .bind(sc)
+            .bind(idm)
             .bind(idi)
             .fetch_one(&mut *tx)
             .await?
@@ -119,7 +132,7 @@ pub async fn account_for_alias(
     alias: Uuid,
 ) -> Result<Option<AccountKey>, DbError> {
     let row = sqlx::query(
-        "SELECT system_code, idi FROM merchant_account_aliases
+        "SELECT system_code, idm, idi FROM merchant_account_aliases
           WHERE alias = $1 AND merchant_id = $2",
     )
     .bind(alias)
@@ -127,11 +140,7 @@ pub async fn account_for_alias(
     .fetch_optional(pool)
     .await?;
     match row {
-        Some(r) => Ok(Some(AccountKey::new(
-            r.try_get::<i32, _>("system_code")? as u16,
-            Idi::from_slice(&r.try_get::<Vec<u8>, _>("idi")?)
-                .map_err(|_| DbError::AccountNotFound)?,
-        ))),
+        Some(r) => Ok(Some(account_from_row(&r)?)),
         None => Ok(None),
     }
 }
@@ -329,13 +338,14 @@ pub async fn list_accounts(
 ) -> Result<Vec<AccountSummary>, DbError> {
     let limit = if limit <= 0 { 200 } else { limit.min(1000) };
     let rows = sqlx::query(
-        "SELECT a.system_code, a.idi, a.status, a.created_at,
+        "SELECT a.system_code, a.idm, a.idi, a.status, a.created_at,
                 COALESCE(SUM(b.remaining_amount)
                     FILTER (WHERE b.status = 'active' AND b.expires_at > $1 AND b.remaining_amount > 0),
                     0)::bigint AS balance
            FROM accounts a
-           LEFT JOIN topup_buckets b ON b.system_code = a.system_code AND b.idi = a.idi
-          GROUP BY a.system_code, a.idi, a.status, a.created_at
+           LEFT JOIN topup_buckets b
+             ON b.system_code = a.system_code AND b.idm = a.idm AND b.idi = a.idi
+          GROUP BY a.system_code, a.idm, a.idi, a.status, a.created_at
           ORDER BY balance DESC, a.created_at DESC
           LIMIT $2",
     )
@@ -346,11 +356,7 @@ pub async fn list_accounts(
     rows.into_iter()
         .map(|r| {
             Ok(AccountSummary {
-                account: AccountKey::new(
-                    r.try_get::<i32, _>("system_code")? as u16,
-                    Idi::from_slice(&r.try_get::<Vec<u8>, _>("idi")?)
-                        .map_err(|_| DbError::AccountNotFound)?,
-                ),
+                account: account_from_row(&r)?,
                 status: r.try_get("status")?,
                 balance: Yen::new(r.try_get::<i64, _>("balance")?),
                 created_at: to_jiff(r.try_get("created_at")?),
@@ -390,6 +396,7 @@ pub async fn adjust(
     }
     let magnitude = delta.as_i64().abs();
     let sc = account.system_code as i32;
+    let idm = account.idm.as_bytes().as_slice();
     let idi = account.idi.as_bytes().as_slice();
 
     let mut tx = pool.begin().await?;
@@ -397,11 +404,12 @@ pub async fn adjust(
 
     let txn_id = Uuid::now_v7();
     sqlx::query(
-        "INSERT INTO transactions (id, system_code, idi, kind, amount, idempotency_key, note, occurred_at)
-         VALUES ($1, $2, $3, 'adjustment', $4, $5, $6, $7)",
+        "INSERT INTO transactions (id, system_code, idm, idi, kind, amount, idempotency_key, note, occurred_at)
+         VALUES ($1, $2, $3, $4, 'adjustment', $5, $6, $7, $8)",
     )
     .bind(txn_id)
     .bind(sc)
+    .bind(idm)
     .bind(idi)
     .bind(magnitude)
     .bind(txn_id.to_string())
@@ -416,11 +424,12 @@ pub async fn adjust(
         let bucket_id = Uuid::now_v7();
         sqlx::query(
             "INSERT INTO topup_buckets
-                 (id, system_code, idi, topup_txn_id, original_amount, remaining_amount, topped_up_at, expires_at, status)
-             VALUES ($1, $2, $3, $4, $5, $5, $6, $7, 'active')",
+                 (id, system_code, idm, idi, topup_txn_id, original_amount, remaining_amount, topped_up_at, expires_at, status)
+             VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, 'active')",
         )
         .bind(bucket_id)
         .bind(sc)
+        .bind(idm)
         .bind(idi)
         .bind(txn_id)
         .bind(magnitude)
@@ -429,11 +438,12 @@ pub async fn adjust(
         .execute(&mut *tx)
         .await?;
         sqlx::query(
-            "INSERT INTO ledger_entries (id, system_code, idi, transaction_id, bucket_id, kind, amount, created_at)
-             VALUES ($1, $2, $3, $4, $5, 'adjustment', $6, $7)",
+            "INSERT INTO ledger_entries (id, system_code, idm, idi, transaction_id, bucket_id, kind, amount, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, 'adjustment', $7, $8)",
         )
         .bind(Uuid::now_v7())
         .bind(sc)
+        .bind(idm)
         .bind(idi)
         .bind(txn_id)
         .bind(bucket_id)
@@ -447,12 +457,13 @@ pub async fn adjust(
         let rows = sqlx::query(
             "SELECT id, remaining_amount, topped_up_at, expires_at
                FROM topup_buckets
-              WHERE system_code = $1 AND idi = $2 AND status = 'active'
-                AND expires_at > $3 AND remaining_amount > 0
+              WHERE system_code = $1 AND idm = $2 AND idi = $3 AND status = 'active'
+                AND expires_at > $4 AND remaining_amount > 0
               ORDER BY expires_at, topped_up_at, id
               FOR UPDATE",
         )
         .bind(sc)
+        .bind(idm)
         .bind(idi)
         .bind(to_odt(now))
         .fetch_all(&mut *tx)
@@ -486,11 +497,12 @@ pub async fn adjust(
             .execute(&mut *tx)
             .await?;
             sqlx::query(
-                "INSERT INTO ledger_entries (id, system_code, idi, transaction_id, bucket_id, kind, amount, created_at)
-                 VALUES ($1, $2, $3, $4, $5, 'adjustment', $6, $7)",
+                "INSERT INTO ledger_entries (id, system_code, idm, idi, transaction_id, bucket_id, kind, amount, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, 'adjustment', $7, $8)",
             )
             .bind(Uuid::now_v7())
             .bind(sc)
+            .bind(idm)
             .bind(idi)
             .bind(txn_id)
             .bind(d.bucket_id)
@@ -667,11 +679,12 @@ where
     let rows = sqlx::query(
         "SELECT id, remaining_amount, expires_at
            FROM topup_buckets
-          WHERE system_code = $1 AND idi = $2 AND status = 'active'
-            AND expires_at > $3 AND remaining_amount > 0
+          WHERE system_code = $1 AND idm = $2 AND idi = $3 AND status = 'active'
+            AND expires_at > $4 AND remaining_amount > 0
           ORDER BY expires_at, topped_up_at, id",
     )
     .bind(account.system_code as i32)
+    .bind(account.idm.as_bytes().as_slice())
     .bind(account.idi.as_bytes().as_slice())
     .bind(to_odt(now))
     .fetch_all(exec)
@@ -696,10 +709,11 @@ where
 
 async fn ensure_account(tx: &mut sqlx::PgConnection, account: AccountKey) -> Result<(), DbError> {
     sqlx::query(
-        "INSERT INTO accounts (system_code, idi) VALUES ($1, $2)
-         ON CONFLICT (system_code, idi) DO NOTHING",
+        "INSERT INTO accounts (system_code, idm, idi) VALUES ($1, $2, $3)
+         ON CONFLICT (system_code, idm, idi) DO NOTHING",
     )
     .bind(account.system_code as i32)
+    .bind(account.idm.as_bytes().as_slice())
     .bind(account.idi.as_bytes().as_slice())
     .execute(tx)
     .await?;
@@ -720,6 +734,7 @@ pub async fn top_up(
     tz: &TimeZone,
 ) -> Result<TopUp, DbError> {
     let sc = account.system_code as i32;
+    let idm = account.idm.as_bytes().as_slice();
     let idi = account.idi.as_bytes().as_slice();
 
     let mut tx = pool.begin().await?;
@@ -742,13 +757,14 @@ pub async fn top_up(
 
     let txn_id = Uuid::now_v7();
     let inserted: Option<Uuid> = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO transactions (id, system_code, idi, kind, merchant_id, amount, idempotency_key, occurred_at)
-         VALUES ($1, $2, $3, 'top_up', $4, $5, $6, $7)
+        "INSERT INTO transactions (id, system_code, idm, idi, kind, merchant_id, amount, idempotency_key, occurred_at)
+         VALUES ($1, $2, $3, $4, 'top_up', $5, $6, $7, $8)
          ON CONFLICT (kind, idempotency_key) DO NOTHING
          RETURNING id",
     )
     .bind(txn_id)
     .bind(sc)
+    .bind(idm)
     .bind(idi)
     .bind(merchant_id)
     .bind(amount.as_i64())
@@ -760,17 +776,19 @@ pub async fn top_up(
     if inserted.is_none() {
         // Replay: return the original top-up verbatim.
         let row = sqlx::query(
-            "SELECT id, system_code, idi, merchant_id, amount FROM transactions WHERE kind = 'top_up' AND idempotency_key = $1",
+            "SELECT id, system_code, idm, idi, merchant_id, amount FROM transactions WHERE kind = 'top_up' AND idempotency_key = $1",
         )
         .bind(idempotency_key)
         .fetch_one(&mut *tx)
         .await?;
         let existing_id: Uuid = row.try_get("id")?;
+        let existing_idm: Vec<u8> = row.try_get("idm")?;
         let existing_sc: i32 = row.try_get("system_code")?;
         let existing_idi: Vec<u8> = row.try_get("idi")?;
         let existing_merchant: Option<Uuid> = row.try_get("merchant_id")?;
         let existing_amount: i64 = row.try_get("amount")?;
-        if existing_sc != sc
+        if existing_idm.as_slice() != idm
+            || existing_sc != sc
             || existing_idi.as_slice() != idi
             || existing_merchant != merchant_id
             || existing_amount != amount.as_i64()
@@ -817,11 +835,12 @@ pub async fn top_up(
     let bucket_id = Uuid::now_v7();
     sqlx::query(
         "INSERT INTO topup_buckets
-             (id, system_code, idi, topup_txn_id, original_amount, remaining_amount, topped_up_at, expires_at, status)
-         VALUES ($1, $2, $3, $4, $5, $5, $6, $7, 'active')",
+             (id, system_code, idm, idi, topup_txn_id, original_amount, remaining_amount, topped_up_at, expires_at, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, 'active')",
     )
     .bind(bucket_id)
     .bind(sc)
+    .bind(idm)
     .bind(idi)
     .bind(txn_id)
     .bind(amount.as_i64())
@@ -831,11 +850,12 @@ pub async fn top_up(
     .await?;
 
     sqlx::query(
-        "INSERT INTO ledger_entries (id, system_code, idi, transaction_id, bucket_id, kind, amount, created_at)
-         VALUES ($1, $2, $3, $4, $5, 'top_up', $6, $7)",
+        "INSERT INTO ledger_entries (id, system_code, idm, idi, transaction_id, bucket_id, kind, amount, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'top_up', $7, $8)",
     )
     .bind(Uuid::now_v7())
     .bind(sc)
+    .bind(idm)
     .bind(idi)
     .bind(txn_id)
     .bind(bucket_id)
@@ -867,6 +887,7 @@ pub async fn pay(
     now: Timestamp,
 ) -> Result<Payment, DbError> {
     let sc = account.system_code as i32;
+    let idm = account.idm.as_bytes().as_slice();
     let idi = account.idi.as_bytes().as_slice();
 
     let mut tx = pool.begin().await?;
@@ -890,13 +911,14 @@ pub async fn pay(
 
     let txn_id = Uuid::now_v7();
     let inserted: Option<Uuid> = sqlx::query_scalar(
-        "INSERT INTO transactions (id, system_code, idi, kind, merchant_id, amount, fee, idempotency_key, occurred_at)
-         VALUES ($1, $2, $3, 'payment', $4, $5, $6, $7, $8)
+        "INSERT INTO transactions (id, system_code, idm, idi, kind, merchant_id, amount, fee, idempotency_key, occurred_at)
+         VALUES ($1, $2, $3, $4, 'payment', $5, $6, $7, $8, $9)
          ON CONFLICT (kind, idempotency_key) DO NOTHING
          RETURNING id",
     )
     .bind(txn_id)
     .bind(sc)
+    .bind(idm)
     .bind(idi)
     .bind(merchant_id)
     .bind(amount.as_i64())
@@ -909,7 +931,7 @@ pub async fn pay(
     if inserted.is_none() {
         // Replay: reconstruct the original deductions from the ledger.
         let row = sqlx::query(
-            "SELECT id, system_code, idi, merchant_id, amount, fee FROM transactions
+            "SELECT id, system_code, idm, idi, merchant_id, amount, fee FROM transactions
               WHERE kind = 'payment' AND idempotency_key = $1",
         )
         .bind(idempotency_key)
@@ -917,11 +939,13 @@ pub async fn pay(
         .await?;
         let existing_id: Uuid = row.try_get("id")?;
         let existing_sc: i32 = row.try_get("system_code")?;
+        let existing_idm: Vec<u8> = row.try_get("idm")?;
         let existing_idi: Vec<u8> = row.try_get("idi")?;
         let existing_merchant: Option<Uuid> = row.try_get("merchant_id")?;
         let existing_amount: i64 = row.try_get("amount")?;
         let existing_fee: i64 = row.try_get("fee")?;
         if existing_sc != sc
+            || existing_idm.as_slice() != idm
             || existing_idi.as_slice() != idi
             || existing_merchant != Some(merchant_id)
             || existing_amount != amount.as_i64()
@@ -962,12 +986,13 @@ pub async fn pay(
     let rows = sqlx::query(
         "SELECT id, remaining_amount, topped_up_at, expires_at
            FROM topup_buckets
-          WHERE system_code = $1 AND idi = $2 AND status = 'active'
-            AND expires_at > $3 AND remaining_amount > 0
+          WHERE system_code = $1 AND idm = $2 AND idi = $3 AND status = 'active'
+            AND expires_at > $4 AND remaining_amount > 0
           ORDER BY expires_at, topped_up_at, id
           FOR UPDATE",
     )
     .bind(sc)
+    .bind(idm)
     .bind(idi)
     .bind(to_odt(now))
     .fetch_all(&mut *tx)
@@ -1004,11 +1029,12 @@ pub async fn pay(
         .await?;
 
         sqlx::query(
-            "INSERT INTO ledger_entries (id, system_code, idi, transaction_id, bucket_id, kind, amount, created_at)
-             VALUES ($1, $2, $3, $4, $5, 'payment', $6, $7)",
+            "INSERT INTO ledger_entries (id, system_code, idm, idi, transaction_id, bucket_id, kind, amount, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, 'payment', $7, $8)",
         )
         .bind(Uuid::now_v7())
         .bind(sc)
+        .bind(idm)
         .bind(idi)
         .bind(txn_id)
         .bind(d.bucket_id)
@@ -1080,7 +1106,7 @@ async fn restore(
 
     // Original payment.
     let prow = sqlx::query(
-        "SELECT system_code, idi, merchant_id, amount, kind FROM transactions WHERE id = $1",
+        "SELECT system_code, idm, idi, merchant_id, amount, kind FROM transactions WHERE id = $1",
     )
     .bind(payment_txn_id)
     .fetch_optional(&mut *tx)
@@ -1089,12 +1115,9 @@ async fn restore(
     if prow.try_get::<String, _>("kind")? != "payment" {
         return Err(DbError::PaymentNotFound);
     }
-    let account = AccountKey::new(
-        prow.try_get::<i32, _>("system_code")? as u16,
-        Idi::from_slice(&prow.try_get::<Vec<u8>, _>("idi")?)
-            .map_err(|_| DbError::PaymentNotFound)?,
-    );
+    let account = account_from_row(&prow).map_err(|_| DbError::PaymentNotFound)?;
     let sc = account.system_code as i32;
+    let idm = account.idm.as_bytes().as_slice();
     let idi = account.idi.as_bytes().as_slice();
     let merchant_id: Option<Uuid> = prow.try_get("merchant_id")?;
     let payment_amount: i64 = prow.try_get("amount")?;
@@ -1144,13 +1167,14 @@ async fn restore(
 
     let txn_id = Uuid::now_v7();
     let inserted: Option<Uuid> = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO transactions (id, system_code, idi, kind, merchant_id, amount, idempotency_key, related_txn_id, occurred_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        "INSERT INTO transactions (id, system_code, idm, idi, kind, merchant_id, amount, idempotency_key, related_txn_id, occurred_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          ON CONFLICT (kind, idempotency_key) DO NOTHING
          RETURNING id",
     )
     .bind(txn_id)
     .bind(sc)
+    .bind(idm)
     .bind(idi)
     .bind(kind)
     .bind(merchant_id)
@@ -1223,11 +1247,12 @@ async fn restore(
                 .execute(&mut *tx)
                 .await?;
             sqlx::query(
-                "INSERT INTO ledger_entries (id, system_code, idi, transaction_id, bucket_id, kind, amount, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                "INSERT INTO ledger_entries (id, system_code, idm, idi, transaction_id, bucket_id, kind, amount, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             )
             .bind(Uuid::now_v7())
             .bind(sc)
+            .bind(idm)
             .bind(idi)
             .bind(txn_id)
             .bind(bucket_id)
@@ -1334,8 +1359,8 @@ pub struct TransactionRow {
 
 /// Filters for [`list_transactions`]. All fields are optional; `limit` is
 /// clamped to `1..=500` (default 50). `before` is a keyset cursor on
-/// `occurred_at` for pagination (newest first). When `account` is set both its
-/// system code and IDi must match.
+/// `occurred_at` for pagination (newest first). When `account` is set its
+/// system code, IDm and IDi must all match.
 #[derive(Debug, Clone, Default)]
 pub struct TxnFilter {
     pub account: Option<AccountKey>,
@@ -1356,17 +1381,19 @@ pub async fn list_transactions(
         filter.limit.min(500)
     };
     let rows = sqlx::query(
-        "SELECT id, system_code, idi, kind, merchant_id, amount, fee, related_txn_id, occurred_at
+        "SELECT id, system_code, idm, idi, kind, merchant_id, amount, fee, related_txn_id, occurred_at
            FROM transactions
           WHERE ($1::integer IS NULL OR system_code = $1)
-            AND ($2::bytea IS NULL OR idi = $2)
-            AND ($3::uuid IS NULL OR merchant_id = $3)
-            AND ($4::text IS NULL OR kind = $4)
-            AND ($5::timestamptz IS NULL OR occurred_at < $5)
+            AND ($2::bytea IS NULL OR idm = $2)
+            AND ($3::bytea IS NULL OR idi = $3)
+            AND ($4::uuid IS NULL OR merchant_id = $4)
+            AND ($5::text IS NULL OR kind = $5)
+            AND ($6::timestamptz IS NULL OR occurred_at < $6)
           ORDER BY occurred_at DESC, id DESC
-          LIMIT $6",
+          LIMIT $7",
     )
     .bind(filter.account.map(|a| a.system_code as i32))
+    .bind(filter.account.map(|a| a.idm.to_bytes().to_vec()))
     .bind(filter.account.map(|a| a.idi.to_bytes().to_vec()))
     .bind(filter.merchant_id)
     .bind(filter.kind.as_deref())
@@ -1379,11 +1406,7 @@ pub async fn list_transactions(
         .map(|r| {
             Ok(TransactionRow {
                 id: r.try_get("id")?,
-                account: AccountKey::new(
-                    r.try_get::<i32, _>("system_code")? as u16,
-                    Idi::from_slice(&r.try_get::<Vec<u8>, _>("idi")?)
-                        .map_err(|_| DbError::AccountNotFound)?,
-                ),
+                account: account_from_row(&r)?,
                 kind: r.try_get("kind")?,
                 merchant_id: r.try_get("merchant_id")?,
                 amount: Yen::new(r.try_get::<i64, _>("amount")?),
@@ -1423,7 +1446,7 @@ pub async fn list_refundable_payments(
 ) -> Result<Vec<RefundablePayment>, DbError> {
     let limit = if limit <= 0 { 50 } else { limit.min(200) };
     let rows = sqlx::query(
-        "SELECT p.id, p.system_code, p.idi, p.merchant_id, p.amount, p.fee, p.occurred_at,
+        "SELECT p.id, p.system_code, p.idm, p.idi, p.merchant_id, p.amount, p.fee, p.occurred_at,
                 COALESCE(r.refunded, 0)::bigint AS refunded
            FROM transactions p
            LEFT JOIN (
@@ -1435,13 +1458,15 @@ pub async fn list_refundable_payments(
           WHERE p.kind = 'payment'
             AND ($1::uuid IS NULL OR p.merchant_id = $1)
             AND ($2::integer IS NULL OR p.system_code = $2)
-            AND ($3::bytea IS NULL OR p.idi = $3)
+            AND ($3::bytea IS NULL OR p.idm = $3)
+            AND ($4::bytea IS NULL OR p.idi = $4)
             AND p.amount - COALESCE(r.refunded, 0) > 0
           ORDER BY p.occurred_at DESC, p.id DESC
-          LIMIT $4",
+          LIMIT $5",
     )
     .bind(merchant_id)
     .bind(account.map(|a| a.system_code as i32))
+    .bind(account.map(|a| a.idm.to_bytes().to_vec()))
     .bind(account.map(|a| a.idi.to_bytes().to_vec()))
     .bind(limit)
     .fetch_all(pool)
@@ -1453,11 +1478,7 @@ pub async fn list_refundable_payments(
             let refunded: i64 = r.try_get("refunded")?;
             Ok(RefundablePayment {
                 id: r.try_get("id")?,
-                account: AccountKey::new(
-                    r.try_get::<i32, _>("system_code")? as u16,
-                    Idi::from_slice(&r.try_get::<Vec<u8>, _>("idi")?)
-                        .map_err(|_| DbError::AccountNotFound)?,
-                ),
+                account: account_from_row(&r)?,
                 merchant_id: r.try_get("merchant_id")?,
                 amount: Yen::new(amount),
                 fee: Yen::new(r.try_get::<i64, _>("fee")?),
@@ -1511,7 +1532,7 @@ pub async fn expire_due(
         loop {
             let mut tx = pool.begin().await?;
             let rows = sqlx::query(
-                "SELECT id, system_code, idi, remaining_amount FROM topup_buckets
+                "SELECT id, system_code, idm, idi, remaining_amount FROM topup_buckets
                   WHERE status = 'active' AND expires_at <= $1 AND remaining_amount > 0
                   ORDER BY expires_at
                   FOR UPDATE SKIP LOCKED
@@ -1527,14 +1548,16 @@ pub async fn expire_due(
             for r in rows {
                 let bucket_id: Uuid = r.try_get("id")?;
                 let bucket_sc: i32 = r.try_get("system_code")?;
+                let idm_bytes: Vec<u8> = r.try_get("idm")?;
                 let idi_bytes: Vec<u8> = r.try_get("idi")?;
                 let remaining: i64 = r.try_get("remaining_amount")?;
                 sqlx::query(
-                    "INSERT INTO ledger_entries (id, system_code, idi, bucket_id, kind, amount, created_at)
-                     VALUES ($1, $2, $3, $4, 'expiry', $5, $6)",
+                    "INSERT INTO ledger_entries (id, system_code, idm, idi, bucket_id, kind, amount, created_at)
+                     VALUES ($1, $2, $3, $4, $5, 'expiry', $6, $7)",
                 )
                 .bind(Uuid::now_v7())
                 .bind(bucket_sc)
+                .bind(&idm_bytes)
                 .bind(&idi_bytes)
                 .bind(bucket_id)
                 .bind(-remaining)
@@ -1712,7 +1735,7 @@ pub async fn outstanding_balance(
 ) -> Result<OutstandingReport, DbError> {
     let head = sqlx::query(
         "SELECT COALESCE(SUM(remaining_amount), 0)::bigint AS total,
-                COUNT(DISTINCT (system_code, idi)) AS accounts
+                COUNT(DISTINCT (system_code, idm, idi)) AS accounts
            FROM topup_buckets
           WHERE expires_at > $1 AND remaining_amount > 0",
     )

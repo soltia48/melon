@@ -15,6 +15,7 @@
 pub mod account;
 pub mod expiry;
 pub mod idi;
+pub mod idm;
 pub mod ledger;
 pub mod money;
 pub mod payment;
