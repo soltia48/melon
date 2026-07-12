@@ -16,10 +16,12 @@ melon-auth = { path = "crates/melon-auth" }
 melon-api-types = { path = "crates/melon-api-types" }
 
 # --- FeliCa ---
+# `felica-rs` is a PRIVATE git crate, fetched over SSH (see `.cargo/config.toml`
+# for local builds and the Dockerfile's SSH-agent forwarding for image builds).
+# The rev is pinned to the commit that adds the `usb` feature flag.
 # The oracle/server use `default-features = false` (crypto/protocol only, no
-# rusb); the terminal enables `features = ["usb"]`. Resolved locally via the
-# [patch] below until the usb-feature change is pushed upstream.
-felica-rs = { git = "ssh://git@github.com/soltia48/felica-rs.git", default-features = false }
+# rusb); the terminal enables `features = ["usb"]`.
+felica-rs = { git = "ssh://git@github.com/soltia48/felica-rs.git", rev = "6e01f7d3ee41a978b2193f17e4581bbe55e02fa2", default-features = false }
 
 # --- domain / time / money ---
 jiff = { version = "0.2", features = ["serde"] }
@@ -54,5 +56,3 @@ subtle = "2"
 rand = "0.9"
 flume = "0.11"
 
-[patch."ssh://git@github.com/soltia48/felica-rs.git"]
-felica-rs = { path = "../felica-rs" }

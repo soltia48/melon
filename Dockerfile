@@ -1,35 +1,40 @@
+# syntax=docker/dockerfile:1
+#
 # melon-server — production image.
 #
-# ⚠️ BUILD CONTEXT: the **parent** directory that contains BOTH `melon/` and
-# `felica-rs/`. The workspace pins felica-rs through a `[patch]` to `../felica-rs`
-# (the `usb` feature change is not upstream yet), which lives outside this repo,
-# so a repo-root context cannot see it:
+# It depends on the PRIVATE git crate `felica-rs`, fetched over SSH at build time.
+# Build with BuildKit and forward your SSH agent:
 #
-#     docker build -f melon/Dockerfile -t melon-server:latest .   # run from the parent dir
+#   DOCKER_BUILDKIT=1 docker build --ssh default -t melon-server .
+#   (or `docker compose build`, which forwards the agent via deploy/compose.yaml)
 #
-# `deploy/compose.yaml` already sets `context: ../..` for this reason. Once the
-# felica-rs change is upstream, drop the `[patch]`, delete the felica-rs COPY, and
-# the context can shrink back to the repo root.
+# `deploy/compose.yaml` sets `context: ..` (the repo root, since deploy/ is inside
+# it). The build host must have an ssh-agent with a key authorized for the repo.
 
 # ---------- builder ----------
-# Any rustup-based image works: rust-toolchain.toml pins the exact toolchain and
-# cargo installs it on first use.
 FROM rust:1-bookworm AS builder
 
-# aws-lc-rs (rustls, via sqlx) needs cmake + a C toolchain to build.
+# cmake/clang: aws-lc-rs (rustls, via sqlx). git/openssh-client: fetch felica-rs.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        cmake clang pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+        cmake clang pkg-config git openssh-client ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p -m 0700 /root/.ssh \
+    && ssh-keyscan github.com >> /root/.ssh/known_hosts
+
+# Fetch git deps with the system git client so the forwarded SSH agent is used
+# (libgit2's SSH auth is limited). The felica-rs URL is already `ssh://…`, so no
+# https→ssh rewrite is needed.
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 WORKDIR /src
-COPY felica-rs/ felica-rs/
-COPY melon/ melon/
+COPY . .
 
-WORKDIR /src/melon
 # Build ONLY the server: a workspace-wide build would union felica-rs's `usb`
 # feature (enabled by melon-terminal) and link rusb/libusb into the server.
-# `--locked` makes the build reproducible from Cargo.lock.
-RUN cargo build --release --locked -p melon-server \
+# `--locked` makes the build reproducible from Cargo.lock. `--mount=type=ssh`
+# exposes the forwarded agent to the `cargo build` (and thus to git).
+RUN --mount=type=ssh \
+    cargo build --release --locked -p melon-server \
     && strip target/release/melon-server
 
 # ---------- runtime ----------
@@ -41,15 +46,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin melon
 
-COPY --from=builder /src/melon/target/release/melon-server /usr/local/bin/melon-server
+COPY --from=builder /src/target/release/melon-server /usr/local/bin/melon-server
 
 # The Web UIs (admin/merchant SPAs) and the SQL migrations are compiled into the
 # binary (`include_str!` / `sqlx::migrate!`), so there is nothing else to ship.
 USER melon:melon
 EXPOSE 8080
 
-# Listen on all interfaces *inside* the container; the reverse proxy is the only
-# thing that reaches it (the port is never published to the host).
+# Listen on all interfaces *inside* the container; cloudflared is the only thing
+# that reaches it (the port is never published to the host).
 ENV MELON_BIND=0.0.0.0:8080 \
     RUST_LOG=info
 

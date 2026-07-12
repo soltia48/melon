@@ -1,16 +1,15 @@
-# Keep the build context small and free of secrets.
-# NOTE: the build context is the PARENT of this repo (see Dockerfile), so these
-# patterns are matched against `melon/...` and `felica-rs/...` too.
-**/target/
-**/.git/
-**/.github/
+# Keep the build context (this repo) small and free of secrets.
+target/
+.git/
+.github/
 
 # Secrets must never enter the image.
-**/.env
-**/.env.*
-**/*.jsonl
-**/secrets/
+.env
+.env.*
+*.jsonl
+deploy/secrets/
+deploy/.env
 
 # Not needed to build the server.
-**/docs/
-**/*.md
+docs/
+*.md

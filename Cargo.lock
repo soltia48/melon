@@ -675,6 +675,7 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 [[package]]
 name = "felica-rs"
 version = "0.1.0"
+source = "git+ssh://git@github.com/soltia48/felica-rs.git?rev=6e01f7d3ee41a978b2193f17e4581bbe55e02fa2#6e01f7d3ee41a978b2193f17e4581bbe55e02fa2"
 dependencies = [
  "aes",
  "cbc",

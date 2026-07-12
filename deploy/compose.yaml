@@ -64,9 +64,13 @@ services:
   server:
     image: melon-server:${MELON_VERSION:-latest}
     build:
-      # The parent of the repo: the workspace [patch] needs ../felica-rs.
-      context: ../..
-      dockerfile: melon/Dockerfile
+      # The repo root (deploy/ lives inside it).
+      context: ..
+      dockerfile: Dockerfile
+      # Forward the SSH agent so the private `felica-rs` git dependency can be
+      # fetched at build time (requires BuildKit; use `docker compose build`).
+      ssh:
+        - default
     restart: unless-stopped
     depends_on:
       db:
