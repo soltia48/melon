@@ -499,16 +499,6 @@ pub fn refund(
     )
 }
 
-/// Parse a `u16` accepting a `0x`/`0X` hex prefix, else decimal.
-pub fn parse_u16(s: &str) -> Result<u16> {
-    let t = s.trim();
-    let parsed = match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        Some(hex) => u16::from_str_radix(hex, 16),
-        None => t.parse::<u16>(),
-    };
-    parsed.map_err(|_| anyhow!("invalid value '{s}' (use hex like 0x0003 or decimal like 3)"))
-}
-
 /// POST JSON with a bearer token (and optional idempotency key), returning the
 /// parsed body or an error carrying the server's message.
 pub fn post(
@@ -601,14 +591,6 @@ fn into_result(status: reqwest::StatusCode, value: Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parses_hex_and_decimal_system_codes() {
-        assert_eq!(parse_u16("0x0003").unwrap(), 3);
-        assert_eq!(parse_u16("0XFE00").unwrap(), 0xFE00);
-        assert_eq!(parse_u16("3").unwrap(), 3);
-        assert!(parse_u16("nope").is_err());
-    }
 
     #[test]
     fn server_order_decides_the_selected_system() {

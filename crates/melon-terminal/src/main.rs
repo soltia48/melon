@@ -20,7 +20,7 @@ use tracing_subscriber::EnvFilter;
 
 use melon_terminal::{
     Config, Op, WaitAbort, authenticate, fetch_system_codes, http_client, make_target,
-    open_reader_auto, parse_u16, resolve_card, run_operation, wait_for_card,
+    open_reader_auto, resolve_card, run_operation, wait_for_card,
 };
 
 #[derive(Parser, Debug)]
@@ -46,13 +46,6 @@ struct ConnArgs {
     /// Merchant API key (bearer secret).
     #[arg(long, env = "MELON_API_KEY")]
     api_key: String,
-
-    /// Override the usable FeliCa system codes instead of fetching them from the
-    /// server. Hex (`0x0003`) or decimal; repeat the flag or comma-separate.
-    /// Normally omitted — the server reports which systems it holds keys for.
-    /// Area and service are fixed at 0x0000.
-    #[arg(long = "system-code", value_delimiter = ',')]
-    system_codes: Vec<String>,
 
     /// Milliseconds between polls while waiting for a card.
     #[arg(long, default_value_t = 500)]
@@ -116,25 +109,10 @@ fn main() -> Result<()> {
     init_logging(cli.conn.verbose);
     let http = http_client();
 
-    // The usable systems come from the server (those it holds keys for).
-    // `--system-code` overrides that, e.g. for testing against a subset.
-    let system_codes = if cli.conn.system_codes.is_empty() {
-        fetch_system_codes(&http, &cli.conn.server, &cli.conn.api_key)
-            .context("fetching usable system codes from the server")?
-    } else {
-        let codes = cli
-            .conn
-            .system_codes
-            .iter()
-            .map(|s| parse_u16(s))
-            .collect::<Result<Vec<_>>>()
-            .context("--system-code")?;
-        tracing::info!(
-            system_codes = %melon_terminal::fmt_codes(&codes),
-            "usable systems overridden by --system-code (server list not fetched)"
-        );
-        codes
-    };
+    // The usable systems (and their priority order) come from the server — those
+    // it holds keys for. See `resolve_card` for how one is chosen per card.
+    let system_codes = fetch_system_codes(&http, &cli.conn.server, &cli.conn.api_key)
+        .context("fetching usable system codes from the server")?;
 
     let cfg = Config {
         server: cli.conn.server,

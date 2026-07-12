@@ -40,12 +40,12 @@ export MELON_BOOTSTRAP_ADMIN_EMAIL=admin@example.com
 export MELON_BOOTSTRAP_ADMIN_PASSWORD='<10 文字以上>'
 cargo run -p melon-server
 
-# 3. Web 管理画面 / 加盟店ポータル
-#    http://127.0.0.1:8080/admin     … 管理者トークンでログイン
-#    http://127.0.0.1:8080/merchant  … 加盟店 API キーでログイン
+# 3. Web 管理画面 / 加盟店ポータル(メール + パスワードでサインイン)
+#    http://127.0.0.1:8080/admin     … 発行者(管理者)アカウント
+#    http://127.0.0.1:8080/merchant  … 加盟店アカウント
 
 # 4. 端末(要 PaSoRi RC-S380 + カード)
-cargo run -p melon-terminal -- --api-key <加盟店APIキー> --op pay --amount 500 --system-code 0x0003,0xFE00
+cargo run -p melon-terminal -- --api-key <加盟店APIキー> --op pay --amount 500
 ```
 
 詳細は各ドキュメントを参照してください。全ワークスペースのテストは `DATABASE_URL=... cargo test --workspace` で実行できます。
