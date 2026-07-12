@@ -1,0 +1,85 @@
+# Format check, clippy, and the full test suite on every push and pull request.
+#
+# Like the release workflow, this needs the **FELICA_RS_TOKEN** repository secret
+# to fetch the private `felica-rs` git dependency (see .github/workflows/release.yml
+# for how to create it). Pull requests from forks don't get repository secrets, so
+# they can't fetch felica-rs and this workflow will fail for them — expected for a
+# private dependency.
+
+name: ci
+
+on:
+  push:
+  pull_request:
+
+# Cancel superseded runs on the same ref (e.g. rapid pushes).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: fmt + clippy + test
+    runs-on: ubuntu-latest
+
+    # The melon-db / melon-server tests use `#[sqlx::test]`, which creates a fresh
+    # database per test — so the connection role must be a superuser (the postgres
+    # image makes POSTGRES_USER one).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: melon
+          POSTGRES_PASSWORD: melon
+          POSTGRES_DB: melon
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U melon"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgres://melon:melon@localhost:5432/melon
+      # felica-rs is a git dep behind the insteadOf rewrite below; fetch it with
+      # the system git client (also set in .cargo/config.toml).
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install libusb (melon-terminal links it)
+        run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev pkg-config
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Authorize the private felica-rs dependency
+        env:
+          FELICA_RS_TOKEN: ${{ secrets.FELICA_RS_TOKEN }}
+        run: |
+          if [ -z "$FELICA_RS_TOKEN" ]; then
+            echo "::error::FELICA_RS_TOKEN secret is not set — cannot fetch the private felica-rs crate." >&2
+            exit 1
+          fi
+          git config --global \
+            url."https://x-access-token:${FELICA_RS_TOKEN}@github.com/".insteadOf \
+            "ssh://git@github.com/"
+
+      - name: Format check
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --locked
