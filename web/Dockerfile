@@ -34,8 +34,11 @@ ENV NODE_ENV=production \
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin nextjs
 
 # `output: "standalone"` bundles the server and only the node_modules it needs.
+# It does NOT include `public/` or `.next/static` — copy both in explicitly, or
+# static assets (e.g. /melon-logo.png) 404 at runtime.
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
 
 USER nextjs
 EXPOSE 3000
