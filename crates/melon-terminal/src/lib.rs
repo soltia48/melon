@@ -156,10 +156,12 @@ pub enum ReaderPoll {
 /// to THAT system only — a multi-system card must be re-polled with the chosen
 /// system code before authenticating (see [`resolve_card`]).
 ///
-/// A poll can fail two very different ways: no card responded (the reader is fine)
-/// or the reader was unplugged. libusb surfaces the latter as `NoDevice`
-/// (`io::ErrorKind::NotFound`), while a no-card is a timeout — so they're
-/// distinguishable, which lets the kiosk notice a disconnect promptly.
+/// A poll fails two very different ways: no card responded (the reader is fine),
+/// or the reader was unplugged. A **disconnect is a transport (USB) failure** — a
+/// non-timeout `DriverError::Io` — which is `NotFound` on Linux (libusb `NoDevice`)
+/// and a generic I/O error on Windows (rusb `Io`). A no-card is instead a timeout
+/// (`Io(TimedOut)` / `Communication::Timeout`) and an RF glitch is a chipset error;
+/// both mean "keep polling". So: any non-timeout I/O error ⇒ the reader is gone.
 pub fn poll_reader(reader: &mut Reader, target: &RemoteTarget) -> ReaderPoll {
     match reader
         .driver_mut()
@@ -173,12 +175,14 @@ pub fn poll_reader(reader: &mut Reader, target: &RemoteTarget) -> ReaderPoll {
             );
             ReaderPoll::Card(poll)
         }
-        Err(DriverError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-            debug!("wildcard poll (0xFFFF): reader disconnected (USB no-device)");
+        Err(DriverError::Io(e)) if e.kind() != std::io::ErrorKind::TimedOut => {
+            // Transport failure that isn't a read timeout: the reader is gone.
+            // (Linux: NotFound / Windows: a generic I/O error.)
+            debug!(error = %e, kind = ?e.kind(), "wildcard poll (0xFFFF): reader disconnected");
             ReaderPoll::Gone
         }
         Err(e) => {
-            // The common case while idle: nothing on the reader.
+            // No card (timeout) or a transient RF/chipset error — keep polling.
             trace!(error = %e, "wildcard poll (0xFFFF): no card");
             ReaderPoll::Empty
         }
