@@ -1,0 +1,32 @@
+[package]
+name = "melon-terminal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Melon merchant terminal: drives a PaSoRi reader, relays FeliCa frames to the server's online mutual authentication, then charges/tops up."
+
+# Shared logic (reader, mutual-auth relay, server calls, serve/kiosk mode) lives
+# in the library; both the CLI one-shot and `serve` mode use it.
+[lib]
+name = "melon_terminal"
+path = "src/lib.rs"
+
+[[bin]]
+name = "melon-terminal"
+path = "src/main.rs"
+
+[dependencies]
+# The only crate that enables the felica-rs `usb` feature — the USB stack lives
+# here, never in the server.
+felica-rs = { workspace = true, features = ["usb"] }
+clap.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+rand.workspace = true
+anyhow = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+# Lightweight blocking HTTP server for `serve` (local Web UI kiosk). No tokio.
+tiny_http = "0.12"
+# Console diagnostics: the card/relay/HTTP flow is logged to stderr (RUST_LOG / -v).
+tracing.workspace = true
+tracing-subscriber.workspace = true

@@ -1,0 +1,24 @@
+[package]
+name = "melon-auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Online FeliCa crypto oracle for Melon: holds keys, drives mutual authentication over a relay, and binds the verified IDi to a payment session. rusb-free."
+
+[lib]
+name = "melon_auth"
+path = "src/lib.rs"
+
+[dependencies]
+# rusb-free: the workspace felica-rs dep sets default-features = false, so this
+# links only the felica_standard crypto/protocol + emulator, never the USB stack.
+felica-rs.workspace = true
+axum.workspace = true
+tokio.workspace = true
+flume.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+rand.workspace = true

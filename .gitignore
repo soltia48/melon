@@ -1,0 +1,5 @@
+/target
+.env
+# Secret FeliCa key material — never commit.
+keys.jsonl
+*.jsonl

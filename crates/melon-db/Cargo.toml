@@ -1,0 +1,21 @@
+[package]
+name = "melon-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PostgreSQL (sqlx) persistence for Melon: immutable ledger, expiry buckets, atomic money operations."
+
+[dependencies]
+melon-core.workspace = true
+sqlx.workspace = true
+jiff.workspace = true
+time.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }
+melon-core.workspace = true
+jiff.workspace = true
+uuid.workspace = true

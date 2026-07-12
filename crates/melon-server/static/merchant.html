@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Melon 加盟店ポータル</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --border: #e4e7ec; --text: #1b1f27; --muted: #6b7280;
+    --accent: #1f9d55; --accent-weak: #e6f5ec; --danger: #d64545; --danger-weak: #fbe9e9;
+    --shadow: 0 1px 3px rgba(16,24,40,.06), 0 1px 2px rgba(16,24,40,.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101215; --panel: #1a1d22; --border: #2c313a; --text: #e7e9ec; --muted: #9aa2af;
+      --accent: #37c26f; --accent-weak: #16301f; --danger: #ef6b6b; --danger-weak: #351c1c; --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+    background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5; }
+  h1, h2, h3 { margin: 0; font-weight: 650; }
+  button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); padding: 7px 13px; transition: .12s; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.sm { padding: 4px 9px; font-size: 12.5px; }
+  button:disabled { opacity: .5; cursor: default; }
+  input, select { font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); }
+  .muted { color: var(--muted); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+
+  #login { min-height: 100vh; display: grid; place-items: center; padding: 20px; }
+  .login-card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: var(--shadow); padding: 28px; width: 100%; max-width: 380px; }
+  .login-card h1 { font-size: 21px; margin-bottom: 4px; }
+  .login-card p { margin: 0 0 18px; }
+  .login-card input { width: 100%; margin-bottom: 12px; }
+  .login-card button { width: 100%; }
+
+  header { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px; padding: 12px 20px; }
+  header .brand { font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  header .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+  nav { display: flex; gap: 4px; flex: 1; flex-wrap: wrap; }
+  nav button { border: none; background: transparent; color: var(--muted); padding: 7px 12px; border-radius: 8px; }
+  nav button.active { background: var(--accent-weak); color: var(--accent); font-weight: 600; }
+  main { max-width: 980px; margin: 0 auto; padding: 22px 20px 60px; }
+  .section { display: none; } .section.active { display: block; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 22px; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: var(--shadow); }
+  .stat .label { color: var(--muted); font-size: 12.5px; }
+  .stat .value { font-size: 26px; font-weight: 700; margin-top: 6px; letter-spacing: -.5px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 18px; margin-bottom: 20px; }
+  .panel h2 { font-size: 15px; margin-bottom: 14px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 0; }
+  dt { color: var(--muted); } dd { margin: 0; }
+
+  table { width: 100%; border-collapse: collapse; } .table-wrap { overflow-x: auto; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: none; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .pill.active { background: var(--accent-weak); color: var(--accent); }
+  .pill.suspended, .pill.closed { background: var(--danger-weak); color: var(--danger); }
+  .pos { color: var(--accent); } .neg { color: var(--danger); }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--danger);
+    color: #fff; padding: 10px 16px; border-radius: 10px; box-shadow: var(--shadow); display: none; z-index: 20; }
+  .empty { color: var(--muted); padding: 18px; text-align: center; }
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="login-card">
+    <h1>🍈 Melon 加盟店ポータル</h1>
+    <p class="muted">加盟店アカウントでサインインしてください。</p>
+    <input id="email" type="email" placeholder="メールアドレス" autocomplete="username"
+      onkeydown="if(event.key==='Enter')$('password').focus()">
+    <input id="password" type="password" placeholder="パスワード" autocomplete="current-password"
+      style="margin-top:10px" onkeydown="if(event.key==='Enter')login()">
+    <button class="primary" style="margin-top:12px" onclick="login()">サインイン</button>
+    <p id="loginErr" class="muted" style="color:var(--danger);margin-top:12px;display:none"></p>
+  </div>
+</div>
+
+<div id="app" style="display:none">
+  <header>
+    <div class="brand"><span class="dot"></span> Melon 加盟店ポータル</div>
+    <nav id="nav"></nav>
+    <span id="who" class="muted" style="font-size:13px"></span>
+    <button onclick="logout()">サインアウト</button>
+  </header>
+  <main>
+    <section id="overview" class="section"></section>
+    <section id="transactions" class="section"></section>
+    <section id="users" class="section"></section>
+  </main>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+"use strict";
+// No credential lives in JS: the session is an HttpOnly cookie the browser
+// attaches automatically (same-origin). XSS cannot read or exfiltrate it.
+let me = null;    // the merchant (from /v1/me)
+let user = null;  // the signed-in person
+
+const yen = n => "¥" + Number(n).toLocaleString("ja-JP");
+const shortId = id => { const s = String(id ?? ""); return s.length > 13 ? s.slice(0, 8) + "…" + s.slice(-4) : s; };
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c]));
+const fmtTime = s => { try { return new Date(s).toLocaleString("ja-JP"); } catch { return s; } };
+const $ = id => document.getElementById(id);
+
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.style.display = "block";
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", 4000);
+}
+
+async function api(method, path, body) {
+  const opts = { method, headers: {}, credentials: "same-origin" };
+  if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+  if (method !== "GET") opts.headers["Idempotency-Key"] = crypto.randomUUID();
+  const res = await fetch(path, opts);
+  const text = await res.text();
+  let data = null; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (!res.ok) throw new Error((data && data.error && data.error.message) || ("HTTP " + res.status));
+  return data;
+}
+
+async function login() {
+  const email = $("email").value.trim(), password = $("password").value;
+  if (!email || !password) return;
+  try {
+    const r = await api("POST", "/v1/auth/login", { email, password });
+    user = r.user;
+    me = await api("GET", "/v1/me");
+    showApp();
+  } catch (e) { const el = $("loginErr"); el.textContent = "サインインできません: " + e.message; el.style.display = "block"; }
+}
+async function logout() {
+  try { await api("POST", "/v1/auth/logout"); } catch {}
+  location.reload();
+}
+
+function showApp() {
+  $("login").style.display = "none";
+  $("app").style.display = "block";
+  $("who").textContent = me && user ? `${user.name} — ${me.name}(${me.code})` : "";
+  $("nav").innerHTML = TABS.map(([id, label]) => `<button data-tab="${id}" onclick="go('${id}')">${label}</button>`).join("");
+  go("overview");
+}
+
+const TABS = [["overview", "概要", renderOverview], ["transactions", "取引", renderTransactions], ["users", "ユーザー", renderUsers]];
+function go(id) {
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.tab === id));
+  document.querySelectorAll(".section").forEach(s => s.classList.toggle("active", s.id === id));
+  const tab = TABS.find(t => t[0] === id);
+  if (tab) tab[2]().catch(e => toast(e.message));
+}
+
+async function renderOverview() {
+  me = await api("GET", "/v1/me");
+  $("who").textContent = `${me.name}(${me.code})`;
+  $("overview").innerHTML = `
+    <div class="cards">
+      <div class="stat">
+        <div class="label">精算残高(発行者からの受取額)</div>
+        <div class="value ${me.collected < 0 ? "neg" : ""}">${yen(me.collected)}</div>
+      </div>
+      <div class="stat"><div class="label">決済手数料率</div><div class="value">${(me.fee_bps / 100).toFixed(2)}%</div></div>
+      <div class="stat"><div class="label">与信限度</div><div class="value">${yen(me.credit_limit)}</div></div>
+      <div class="stat"><div class="label">チャージ可能額(余力)</div><div class="value ${(me.collected + me.credit_limit) < 0 ? "neg" : ""}">${yen(me.collected + me.credit_limit)}</div></div>
+    </div>
+    <div class="panel">
+      <h2>加盟店情報</h2>
+      <dl>
+        <dt>コード</dt><dd class="mono">${esc(me.code)}</dd>
+        <dt>名称</dt><dd>${esc(me.name)}</dd>
+        <dt>状態</dt><dd><span class="pill ${esc(me.status)}">${esc(me.status)}</span></dd>
+        <dt>加盟店 ID</dt><dd class="mono muted">${esc(me.id)}</dd>
+        <dt>登録日時</dt><dd class="muted">${fmtTime(me.created_at)}</dd>
+      </dl>
+      <p class="muted" style="margin:14px 0 0">精算残高 = 受領した支払 − チャージ取扱 − 返金・取消 + 調整。マイナスは発行者への支払い(集金した金額)を表します。</p>
+    </div>`;
+}
+
+const KINDS = ["", "payment", "top_up", "refund", "reversal"];
+async function renderTransactions() {
+  const el = $("transactions");
+  if (!el.dataset.init) {
+    el.dataset.init = "1";
+    el.innerHTML = `
+      <div class="panel">
+        <h2>取引</h2>
+        <div class="row">
+          <div class="field"><label>種別</label><select id="tKind">${KINDS.map(k => `<option value="${k}">${k || "すべて"}</option>`).join("")}</select></div>
+          <div class="field"><label>件数</label><input id="tLimit" type="number" value="100" min="1" max="500" style="width:90px"></div>
+          <button class="primary" onclick="loadTxns()">更新</button>
+        </div>
+      </div>
+      <div class="panel"><div id="tResult" class="table-wrap"></div></div>`;
+  }
+  loadTxns();
+}
+async function loadTxns() {
+  const kind = $("tKind").value, limit = $("tLimit").value || 100;
+  const qs = new URLSearchParams({ limit });
+  if (kind) qs.set("kind", kind);
+  const box = $("tResult"); box.innerHTML = `<div class="muted">読み込み中…</div>`;
+  try {
+    const list = await api("GET", "/v1/transactions?" + qs);
+    if (!list.length) { box.innerHTML = `<div class="empty">取引がありません</div>`; return; }
+    box.innerHTML = `<table>
+      <thead><tr><th>日時</th><th>種別</th><th>利用者 ID(仮名)</th><th class="num">金額</th><th class="num">手数料</th><th>操作</th></tr></thead>
+      <tbody>${list.map(t => {
+        const sign = t.kind === "payment" ? "pos" : (t.kind === "top_up" || t.kind === "refund" || t.kind === "reversal") ? "neg" : "";
+        const disp = (t.kind === "payment") ? yen(t.amount) : "−" + yen(t.amount).slice(1);
+        const actions = t.kind === "payment"
+          ? `<button class="sm" onclick="doRefund('${t.id}', this)">返金</button>
+             <button class="sm" onclick="doVoid('${t.id}', this)">取消</button>`
+          : "—";
+        return `<tr>
+          <td class="muted">${fmtTime(t.occurred_at)}</td>
+          <td>${esc(t.kind)}</td>
+          <td class="mono" title="${esc(t.account_id)}">${esc(shortId(t.account_id))}</td>
+          <td class="num ${sign}">${disp}</td>
+          <td class="num muted">${t.fee ? yen(t.fee) : "—"}</td>
+          <td>${actions}</td>
+        </tr>`; }).join("")}</tbody></table>`;
+  } catch (e) { box.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+
+async function doRefund(paymentId, btn) {
+  const input = prompt("返金額(円)。空欄で全額返金します。");
+  if (input === null) return;
+  const trimmed = input.trim();
+  let amount = null;
+  if (trimmed !== "") {
+    amount = parseInt(trimmed, 10);
+    if (!(amount > 0)) return toast("正の金額を入力してください");
+  }
+  btn.disabled = true;
+  try {
+    const r = await api("POST", "/v1/refunds", { payment_id: paymentId, amount });
+    toast(`返金しました: ${yen(r.amount)}`);
+    loadTxns(); renderOverview();
+  } catch (e) { toast(e.message); btn.disabled = false; }
+}
+async function doVoid(paymentId, btn) {
+  if (!confirm("この支払いを取り消します(全額)。よろしいですか?")) return;
+  btn.disabled = true;
+  try {
+    const r = await api("POST", `/v1/payments/${encodeURIComponent(paymentId)}/void`);
+    toast(`取り消しました: ${yen(r.amount)}`);
+    loadTxns(); renderOverview();
+  } catch (e) { toast(e.message); btn.disabled = false; }
+}
+
+// ---- users (this merchant's own staff) ----
+async function renderUsers() {
+  const el = $("users");
+  el.innerHTML = `<div class="panel muted">読み込み中…</div>`;
+  try {
+    const users = await api("GET", "/v1/users");
+    const rows = users.length ? users.map(u => `
+      <tr>
+        <td>${esc(u.name)}${user && u.id === user.id ? ' <span class="muted">(あなた)</span>' : ""}</td>
+        <td class="mono">${esc(u.email)}</td>
+        <td>${u.status === "active" ? "有効" : "<span class='neg'>無効</span>"}</td>
+        <td class="muted">${fmtTime(u.created_at)}</td>
+        <td style="text-align:right">
+          ${user && u.id === user.id ? "" :
+            `<button class="sm" onclick="setStaffStatus('${esc(u.id)}', '${u.status === "active" ? "disabled" : "active"}')">
+               ${u.status === "active" ? "無効化" : "有効化"}</button>`}
+        </td>
+      </tr>`).join("") : `<tr><td colspan="5" class="empty">ユーザーなし</td></tr>`;
+    el.innerHTML = `
+      <div class="panel">
+        <h2>スタッフを追加</h2>
+        <p class="muted">自店のユーザーのみ作成できます(パスワードは 10 文字以上)。</p>
+        <div class="row">
+          <div class="field"><label>名前</label><input id="sName" placeholder="山田 太郎"></div>
+          <div class="field"><label>メールアドレス</label><input id="sEmail" type="email" placeholder="staff@example.com"></div>
+          <div class="field"><label>パスワード</label><input id="sPass" type="password" autocomplete="new-password"></div>
+          <button class="primary" onclick="createStaff(this)">追加</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>自店のユーザー</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>名前</th><th>メール</th><th>状態</th><th>作成日時</th><th></th></tr></thead>
+          <tbody>${rows}</tbody></table></div>
+      </div>
+      <div class="panel">
+        <h2>パスワード変更</h2>
+        <div class="row">
+          <div class="field"><label>現在のパスワード</label><input id="pwCur" type="password" autocomplete="current-password"></div>
+          <div class="field"><label>新しいパスワード</label><input id="pwNew" type="password" autocomplete="new-password"></div>
+          <button class="primary" onclick="changePassword(this)">変更</button>
+        </div>
+        <p class="muted" style="margin:10px 0 0">変更すると全端末のセッションが失効し、再サインインが必要です。</p>
+      </div>`;
+  } catch (e) { el.innerHTML = `<div class="panel empty">${esc(e.message)}</div>`; }
+}
+async function createStaff(btn) {
+  const name = $("sName").value.trim(), email = $("sEmail").value.trim(), password = $("sPass").value;
+  if (!name || !email || !password) return toast("名前・メール・パスワードを入力してください");
+  btn.disabled = true;
+  try {
+    await api("POST", "/v1/users", { name, email, password });
+    toast("スタッフを追加しました");
+    renderUsers();
+  } catch (e) { toast(e.message); } finally { btn.disabled = false; }
+}
+async function setStaffStatus(id, status) {
+  try {
+    await api("POST", `/v1/users/${encodeURIComponent(id)}/status`, { status });
+    toast(status === "active" ? "有効化しました" : "無効化しました(セッションも失効)");
+    renderUsers();
+  } catch (e) { toast(e.message); }
+}
+async function changePassword(btn) {
+  const current_password = $("pwCur").value, new_password = $("pwNew").value;
+  if (!current_password || !new_password) return toast("現在と新しいパスワードを入力してください");
+  btn.disabled = true;
+  try {
+    await api("POST", "/v1/auth/password", { current_password, new_password });
+    alert("パスワードを変更しました。再度サインインしてください。");
+    location.reload();
+  } catch (e) { toast(e.message); btn.disabled = false; }
+}
+
+// Restore the session from the cookie, if any.
+api("GET", "/v1/auth/me")
+  .then(async u => { user = u; me = await api("GET", "/v1/me"); showApp(); })
+  .catch(() => { /* show the sign-in card */ });
+</script>
+</body>
+</html>

@@ -1,0 +1,203 @@
+# 運用・設定
+
+## 環境変数(melon-server)
+
+| 変数 | 既定 | 説明 |
+|---|---|---|
+| `DATABASE_URL` | (必須) | PostgreSQL 接続文字列 |
+| `MELON_BOOTSTRAP_ADMIN_EMAIL` | — | 初回起動時に作成する管理者のメール(管理者が 1 人も居ない時だけ作成) |
+| `MELON_BOOTSTRAP_ADMIN_PASSWORD` | — | 同パスワード(10 文字以上) |
+| `MELON_USER_SESSION_TTL` | `43200` | サインインセッションの寿命(秒、既定 12 時間) |
+| `MELON_COOKIE_SECURE` | (自動) | セッション Cookie に `Secure` を付ける。既定は**バインド先が loopback 以外なら true**(TLS 前提)。ローカル HTTP 開発では自動的に false |
+| `MELON_KEYS` | `keys.jsonl` | FeliCa 鍵ファイルのパス(秘匿) |
+| `MELON_BIND` | `127.0.0.1:8080` | バインドアドレス |
+| `MELON_SWEEP_INTERVAL_SECS` | `3600` | 失効スイープの実行間隔(秒) |
+| `MELON_DEFAULT_FEE_BPS` | `0` | 新規加盟店の既定手数料率(bps) |
+| `MELON_DEFAULT_CREDIT_LIMIT` | `0` | 新規加盟店の既定与信限度(円) |
+| `FELICA_SESSION_TTL` | `300` | 認証セッションのアイドル TTL(秒) |
+| `FELICA_MAX_SESSIONS` | `1024` | 同時セッション上限 |
+| `RUST_LOG` | `info` | ログレベル(tracing) |
+
+> ⚠️ `MELON_DEFAULT_CREDIT_LIMIT` が 0 の場合、与信限度未設定の加盟店は topup を売れません(最初の topup で精算残高がマイナスになり拒否)。加盟店ごとに与信限度を設定するか、この既定値を設定してください。
+
+## データベース
+
+- **PostgreSQL**(sqlx)。マイグレーションは**サーバ起動時に自動適用**(`sqlx::migrate!`)。
+- 開発用は専用コンテナ `melon-postgres`(ホスト `127.0.0.1:5433`、user/pass/db = melon)。リポジトリ直下 `compose.yaml`:
+
+```bash
+docker compose up -d db
+export DATABASE_URL=postgres://melon:melon@127.0.0.1:5433/melon
+```
+
+### マイグレーション(`crates/melon-db/migrations/`)
+
+| ファイル | 内容 |
+|---|---|
+| `0001_init` | accounts / merchants / transactions / topup_buckets / ledger_entries、追記専用トリガ |
+| `0002_merchant_api_keys` | 加盟店 API キー(ハッシュ保存) |
+| `0003_transaction_note` | 調整理由 `transactions.note` |
+| `0004_merchant_adjustments` | 加盟店精算残高の調整(追記専用) |
+| `0005_payment_fees` | `merchants.fee_bps` / `transactions.fee` |
+| `0006_merchant_credit_limit` | `merchants.credit_limit` |
+| `0007_issuer_ledger` | 発行者の引き出し・補正(`issuer_adjustments`、追記専用) |
+| `0008_merchant_account_aliases` | 加盟店ごとの仮名 ID(`merchant_account_aliases`、追記専用) |
+| `0009_users` | ユーザーアカウント(`users`)+ サーバ側セッション(`user_sessions`) |
+
+- 開発中にスキーマ基盤を変更してリセットが必要な場合:
+  `docker exec melon-postgres psql -U melon -d melon -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"` → サーバ再起動で全マイグレーション再適用。
+
+## 鍵ファイル(`keys.jsonl`)
+
+1 行 1 JSON(felica-rs の `keys.jsonl` 形式)。**秘匿情報。リポジトリにコミットしない**(`.gitignore` 済み)。
+
+```json
+{"system_code":"0003","node":"FFFF","algo":"DES","version":"0003","idm":null,"key":"00112233445566FF"}
+```
+
+- `system_code` / `node`: hex。node `FFFF` は**システム鍵**、その他はエリア/サービス鍵。
+- `algo`: `DES`(8 バイト鍵)。`AES` レコードは無視(本オラクルは DES で認証)。
+- `idm`: `null`(システム共通鍵)または 8 バイト hex(カード個別鍵。一致時に優先)。
+- `key`: 鍵(hex)。
+
+> **⚠️ システムコードの記述順 = 優先順位**
+> `GET /v1/system-codes` はこのファイルでの **`system_code` の初出順**をそのまま返します。端末は**この順序を優先**して、カードが持つ最初のシステムを選びます(§端末)。マルチシステムカードでどのシステムを使うかは、**`keys.jsonl` の並び順で制御**してください(例: 0xFE00 を先に書けば 0xFE00 が優先される)。DES 鍵の無いシステム(AES のみ等)は一覧に含まれません。
+
+## サーバの起動
+
+```bash
+export DATABASE_URL=postgres://melon:melon@127.0.0.1:5433/melon
+export MELON_ADMIN_TOKEN=<管理者トークン>
+export MELON_KEYS=keys.jsonl
+# 任意: MELON_DEFAULT_FEE_BPS / MELON_DEFAULT_CREDIT_LIMIT など
+cargo run -p melon-server        # 開発
+# 本番向け(rusb フリー成果物): cargo build -p melon-server --release
+```
+
+## サインオン(ユーザーアカウント)
+
+**人間はユーザーアカウント(メール + パスワード)でサインイン**します。端末(機械)は従来どおり**加盟店 API キー**を使い、人間の資格情報とは分離されています。
+
+- **パスワード**: Argon2id(メモリハード、パスワードごとのソルト、PHC 文字列で保存)。10 文字以上。
+- **セッション**: サーバ側(`user_sessions`)。Cookie は **HttpOnly / SameSite=Strict**(+ TLS 下では `Secure`)なので **JS からは読めず、XSS で盗めません**。保存されるのはトークンの SHA-256 のみ。行を消せば**即時失効**。
+- **ロール**: `admin`(発行者スタッフ)/ `merchant`(加盟店スタッフ、1 加盟店に紐づく)。
+- **ユーザー管理**: 管理者は全ユーザーを作成/無効化/パスワード再設定。**加盟店は自店のスタッフのみ**追加/無効化でき、admin や他店ユーザーは作れません(サーバ側で強制)。
+- 無効化・パスワード変更は、そのユーザーの**全セッションを失効**させます。
+
+**初回セットアップ**(管理者が 1 人も居ない場合のみ作成、冪等):
+
+```bash
+export MELON_BOOTSTRAP_ADMIN_EMAIL=admin@example.com
+export MELON_BOOTSTRAP_ADMIN_PASSWORD='<10 文字以上>'
+cargo run -p melon-server     # 起動時に管理者ユーザーを作成
+```
+
+> ⚠️ 旧 `MELON_ADMIN_TOKEN`(共有トークン)は**廃止**しました。管理者操作はユーザーサインインが必要です。
+
+## Web UI
+
+- **管理画面** `http://<host>/admin` — 発行者アカウントでサインイン。
+  - 概要(未使用残高・発行者残高・口座数・加盟店数・セッション、失効スイープ実行)
+  - 加盟店(作成〔手数料・与信限度〕、一覧、詳細で精算残高調整・状態変更・手数料/与信限度変更・API キー再発行)
+  - 利用者(残高一覧、(system_code, idi) で照会、入金/引落調整、**返金可能な支払いの返金/取消**)
+  - 取引(フィルタ)、未使用残高レポート
+  - 発行者(収益残高=決済手数料収入+失効益+調整の内訳、引き出し・補正の記帳と履歴)
+  - ユーザー(発行者/加盟店ユーザーの作成・無効化・パスワード再設定)
+- **加盟店ポータル** `http://<host>/merchant` — 加盟店アカウントでサインイン。
+  - 概要(精算残高・手数料率・与信限度・チャージ可能額)、自店取引、自店支払いの返金/取消
+  - ユーザー(自店スタッフの追加/無効化、自分のパスワード変更)
+- いずれも単一 HTML の SPA(外部依存なし、light/dark 自動対応)。
+
+## 端末(melon-terminal)
+
+PaSoRi(Sony RC-S380 等)を駆動しフレームを中継する加盟店端末。**要 USB リーダ + 実カード**。2 モードあり、リーダ/相互認証中継/サーバ呼び出しの共通ロジックはライブラリ(`melon_terminal`)を共有します。
+
+**① 一発実行(CLI)** — カード待機 → 認証 → 1 操作 → 結果表示 → 終了。スクリプト/実機立ち上げ向け:
+
+```bash
+cargo run -p melon-terminal -- \
+  --server http://127.0.0.1:8080 \
+  --api-key <加盟店 API キー> \
+  --op pay --amount 500 \
+  --system-code 0x0003,0xFE00
+```
+
+**② `serve`(Web UI キオスク)** — リーダを占有する常駐プロセスがローカル Web UI とローカル JSON API を**同一 `http://localhost` オリジン**で提供(CORS/mixed-content 回避)。ブラウザで開いてタッチ操作で決済・チャージ・残高照会:
+
+```bash
+cargo run -p melon-terminal -- \
+  --api-key <加盟店 API キー> \
+  --system-code 0x0003,0xFE00 \
+  serve --bind 127.0.0.1:8899
+# → ブラウザで http://127.0.0.1:8899/ を開く
+```
+
+- **加盟店 API キー・サーバ URL はプロセス内に留め、ブラウザには渡さない**。UI はローカル `/op/pay|topup`・`/op/balance`・`/op/refund*`・`/status`・`/cancel`・`/reset`・`/me` のみを叩く。
+- **利用者の表示**: 画面に出るのは**仮名 ID(`account_id`)のみ**。端末は生の IDi をサーバから受け取りません(加盟店ごとに異なる仮名 ID)。
+- **加盟店情報**: ヘッダー右上の「ⓘ 加盟店情報」から自店情報(精算残高・チャージ可能額・手数料率・与信限度・コード/名称/状態/登録日時)を閲覧。プロセスが `/v1/me` を代理取得(`/me`)。操作(支払い/チャージ/残高/返金)と情報を分離し、上部タブは操作 4 種に限定。
+- リーダは単一リソースのため、**リーダ専有スレッドが 1 操作ずつ**実行(HTTP ループはジョブ投入と状態返却のみでカード待ちにブロックしない)。同時操作は 409。
+- 画面フロー:金額入力 →(支払う/チャージ/残高)→「カードをかざしてください」→ 認証中 → 完了/エラー。待機中は**キャンセル**可能。失敗時は再読み取り・再送せずエラー表示(一発実行と同じ一回試行の原則)。
+- **返金**:「返金」タブ → カード提示 → その利用者の**返金可能な支払い一覧**から選択 → 金額(既定=全額)→ 実行。照会(要リーダ)と実行(リーダ不要)の 2 段構成。
+- 金額は**オンスクリーンのテンキー**と**物理キーボード**の両方で入力可(数字/Backspace/Enter=実行/Escape=クリア・キャンセル)。
+- **効果音**:決済・チャージ・残高確認・エラーで異なる合成音(Web Audio、外部ファイル不要・オフライン可)。ブラウザの仕様上、最初の操作(タップ/キー)で音声が有効化されます。
+
+| オプション | 既定 | 説明 |
+|---|---|---|
+| `--server` (`MELON_SERVER`) | `http://127.0.0.1:8080` | サーバ URL |
+| `--api-key` (`MELON_API_KEY`) | (必須) | 加盟店 API キー |
+| `--op` | `pay` | `pay` / `topup` / `balance` |
+| `--amount` | — | 金額(円)。`pay`/`topup` は必須、`balance` は不要 |
+| `--system-code` | (任意) | 利用可能なシステムコードの**上書き**(複数可、hex/10 進、`,` 区切りまたは反復)。**通常は省略** — サーバの `GET /v1/system-codes` から取得 |
+| `--poll-interval-ms` | `500` | カード待機中のポーリング間隔 |
+| `--timeout-secs` | `0` | カード待ちの上限(0 = 無期限、一発実行のみ) |
+| `-v` / `-vv` (`RUST_LOG`) | (info) | コンソールログの詳細度(下記) |
+| `serve --bind` | `127.0.0.1:8899` | キオスクのバインドアドレス(`serve` サブコマンド) |
+
+**デバッグログ**(**stderr** に出力。**stdout** は操作結果のみなのでパイプ可能):
+
+| レベル | 指定 | 内容 |
+|---|---|---|
+| **info**(既定) | — | 動作の流れ:リーダ検出、サーバから取得したシステムコード、カード待機/検出、カードのシステムコード一覧と**選択したシステム**、相互認証の完了(**仮名 `account_id`**)、実行した操作 |
+| **debug** | `-v` | + サーバとの HTTP(メソッド/パス/ステータス)、**Request System Code の送受信フレーム**、相互認証の**中継フレーム(各ステップ)**、選択システムでの再ポーリング結果(IDm/PMm) |
+| **trace** | `-vv` | + リクエスト/レスポンスの**生ボディ**、**毎回のポーリング**(カード無し含む) |
+
+`RUST_LOG` を設定するとそちらが優先(例: `RUST_LOG=melon_terminal=debug`、`RUST_LOG=warn`)。**加盟店 API キーはログに出力しません**。キオスク(`serve`)では、UI からのローカルリクエスト・ジョブの開始/完了・失敗時のエラーコードもログに出ます。
+
+**カード検出とシステム選択のフロー**:
+
+1. **サーバから利用可能なシステムコードを取得**(`GET /v1/system-codes` = 鍵を持つシステム)。起動時に 1 回。`--system-code` 指定時はそれを使用。
+2. **ワイルドカード(0xFFFF)で Polling** — カードが present になるまで待機。
+3. 応答したシステムの IDm に対し **Request System Code** を発行し、カードが持つシステムコード一覧を取得。
+4. **サーバの一覧を順に走査**し、カードが持つ最初のシステムコードを選択(**サーバ側の順序が優先** — マルチシステムカードの内部配置に左右されず、どのシステムで取引するかをサーバが決める)。
+5. **選択したシステムコードで再ポーリング** — FeliCa は**システムごとに IDm が異なる**ため、ワイルドカードで得た IDm は再利用できない(再利用すると Authentication1 が失敗する)。ここで得た IDm/PMm で相互認証 → 取引。
+
+**挙動**:
+
+- **カード無し**は待機(ポーリングのタイムアウトは正常)。`--timeout-secs` で打ち切り可。
+- カードを検出したら **1 回だけ試行**。サーバの鍵に一致するシステムがカードに無い、認証失敗、サーバエラー、残高不足等、**何らかの失敗で異常終了**(再読み取り・再送はしない)。キオスクでは「対応していないカードです」等を日本語表示。
+- エリア/サービスは **0x0000 固定**。
+- USB アクセス権限が必要(Linux では対象ユーザーが `plugdev` 等に所属、または udev ルール)。
+
+## ビルド上の注意
+
+- **サーバは `-p melon-server` で個別ビルド**すれば rusb を含みません。ワークスペース全体の `cargo build` は端末の `usb` feature が統合され、felica-rs(rusb)がリンクされます。
+- 端末のビルド/実行には libusb が必要。
+
+## テスト
+
+```bash
+export DATABASE_URL=postgres://melon:melon@127.0.0.1:5433/melon
+cargo test --workspace          # 全テスト(melon-db/server の結合は #[sqlx::test] で毎回一時 DB を作成)
+cargo clippy --workspace --all-targets
+```
+
+- **melon-core**: 金額/失効/消費順/手数料の単体・property テスト。
+- **melon-db**: 実 Postgres での結合(二重支払い・冪等・失効・返金/取消・与信限度・手数料・精算 等)。
+- **melon-auth**: インメモリカードエミュレータでの相互認証。
+- **melon-server**: E2E(加盟店作成 → 相互認証 → チャージ → 支払い → 残高、を HTTP 経由で)。
+
+## 未対応・今後の候補
+
+- 加盟店認証は API キー(Bearer)。HMAC 署名(ts/nonce リプレイ防止)は未実装。
+- 手数料は非返還(返金時の比例返還なし)。
+- オフライン/後方キャプチャ、加盟店ユーザーアカウント(個別ログイン)等は未対応。

@@ -1,0 +1,25 @@
+# Dedicated PostgreSQL for melon development and tests.
+# Isolated from other projects: distinct container name, volume, and host port 5433.
+#
+#   docker compose up -d db
+#   DATABASE_URL=postgres://melon:melon@127.0.0.1:5433/melon
+services:
+  db:
+    image: postgres:16
+    container_name: melon-postgres
+    environment:
+      POSTGRES_USER: melon
+      POSTGRES_PASSWORD: melon
+      POSTGRES_DB: melon
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - melon-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U melon -d melon"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  melon-pgdata:

@@ -1,0 +1,17 @@
+[package]
+name = "melon-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pure domain logic for Melon: money, IDi, immutable ledger and 6-month expiry buckets."
+
+[dependencies]
+jiff.workspace = true
+hex.workspace = true
+serde.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+proptest = "1"

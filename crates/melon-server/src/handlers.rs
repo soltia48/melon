@@ -1,0 +1,1450 @@
+//! HTTP handlers for the melon API.
+//!
+//! Money operations bind to a **card-verified** IDi: the terminal completes
+//! mutual authentication (`/v1/mutual-authentication`), then references the live
+//! session. Top-up and payment claim the session's one-shot spend capability
+//! (`consume_spend`), so each money movement corresponds to a fresh physical tap
+//! and a server-verified IDi that no merchant can forge.
+
+use axum::Json;
+use axum::body::Bytes;
+use axum::extract::{Path, Query, State};
+use axum::http::header::SET_COOKIE;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{Html, IntoResponse, Response};
+use jiff::Timestamp;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use uuid::Uuid;
+
+use melon_core::account::AccountKey;
+use melon_core::idi::Idi;
+use melon_core::money::PositiveYen;
+use melon_db::ops;
+
+use crate::AppState;
+use crate::auth::{AdminUser, AuthUser, AuthedMerchant, MerchantUser};
+use crate::error::ApiError;
+
+// ----- helpers -----
+
+fn now() -> Timestamp {
+    Timestamp::now()
+}
+
+fn idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
+    headers
+        .get("Idempotency-Key")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| ApiError::bad_request("Idempotency-Key header is required"))
+}
+
+fn positive(amount: i64) -> Result<PositiveYen, ApiError> {
+    PositiveYen::from_i64(amount)
+        .map_err(|_| ApiError::bad_request("amount must be a positive integer number of yen"))
+}
+
+fn parse_ts(s: &str) -> Result<Timestamp, ApiError> {
+    s.parse()
+        .map_err(|_| ApiError::bad_request("invalid timestamp"))
+}
+
+fn parse_idi(s: &str) -> Result<Idi, ApiError> {
+    s.trim()
+        .parse()
+        .map_err(|_| ApiError::bad_request("invalid idi (expected 16 hex characters)"))
+}
+
+/// Parse a system code accepting a `0x` hex prefix or decimal.
+fn parse_sc(s: &str) -> Result<u16, ApiError> {
+    let t = s.trim();
+    let parsed = match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        Some(hex) => u16::from_str_radix(hex, 16),
+        None => t.parse::<u16>(),
+    };
+    parsed.map_err(|_| ApiError::bad_request("invalid system_code (hex 0x0003 or decimal)"))
+}
+
+// ----- human sign-on (users + HttpOnly cookie sessions) -----
+
+#[derive(Serialize)]
+pub struct UserView {
+    pub id: Uuid,
+    pub email: String,
+    pub name: String,
+    /// `admin` or `merchant`.
+    pub role: String,
+    pub merchant_id: Option<Uuid>,
+    pub status: String,
+    pub created_at: Timestamp,
+}
+
+fn user_view(u: melon_db::users::User) -> UserView {
+    UserView {
+        id: u.id,
+        email: u.email,
+        name: u.name,
+        role: u.role,
+        merchant_id: u.merchant_id,
+        status: u.status,
+        created_at: u.created_at,
+    }
+}
+
+#[derive(Deserialize)]
+pub struct LoginReq {
+    pub email: String,
+    pub password: String,
+}
+
+/// Sign in. On success the session token is delivered **only** as an HttpOnly
+/// cookie — it is never in the response body, so JavaScript can't read (or leak) it.
+pub async fn login(
+    State(state): State<AppState>,
+    Json(req): Json<LoginReq>,
+) -> Result<Response, ApiError> {
+    let found = melon_db::users::user_for_login(&state.pool, req.email.trim()).await?;
+
+    // Verify a hash even when the user is unknown, so a wrong email and a wrong
+    // password take the same time (no user enumeration by timing).
+    let (user, hash) = match found {
+        Some((user, hash)) => (Some(user), hash),
+        None => (None, DUMMY_HASH.to_string()),
+    };
+    let password_ok = crate::auth::verify_password(&req.password, &hash);
+    let user = match (user, password_ok) {
+        (Some(u), true) if u.status == "active" => u,
+        _ => return Err(ApiError::unauthorized("invalid email or password")),
+    };
+
+    let token = crate::auth::new_secret();
+    let expires_at =
+        Timestamp::now() + jiff::Span::new().seconds(state.user_session_ttl.as_secs() as i64);
+    melon_db::users::create_session(
+        &state.pool,
+        &crate::auth::sha256_hex(&token),
+        user.id,
+        expires_at,
+    )
+    .await?;
+
+    let cookie =
+        crate::auth::session_cookie(&token, state.user_session_ttl, state.cookie_secure);
+    let mut response = Json(serde_json::json!({ "user": user_view(user) })).into_response();
+    response.headers_mut().insert(
+        SET_COOKIE,
+        cookie
+            .parse()
+            .map_err(|_| ApiError::internal("bad cookie"))?,
+    );
+    Ok(response)
+}
+
+/// An Argon2id hash of a random string, used to equalize timing for unknown emails.
+const DUMMY_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHR2YWx1ZQ$\
+                          Zm9yY2VzIGEgdmVyaWZ5IHRvIHJ1biBhbmQgZmFpbA";
+
+/// Sign out: revoke the server-side session and clear the cookie.
+pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
+    if let Some(token) = cookie_value(&headers, crate::auth::SESSION_COOKIE) {
+        melon_db::users::delete_session(&state.pool, &crate::auth::sha256_hex(&token)).await?;
+    }
+    let mut response = Json(serde_json::json!({ "ok": true })).into_response();
+    response.headers_mut().insert(
+        SET_COOKIE,
+        crate::auth::clear_session_cookie(state.cookie_secure)
+            .parse()
+            .map_err(|_| ApiError::internal("bad cookie"))?,
+    );
+    Ok(response)
+}
+
+fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    let cookies = headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
+    cookies.split(';').find_map(|pair| {
+        let (k, v) = pair.trim().split_once('=')?;
+        (k == name).then(|| v.to_string())
+    })
+}
+
+/// The signed-in user (who am I / am I still signed in).
+pub async fn auth_me(AuthUser(user): AuthUser) -> Json<UserView> {
+    Json(user_view(user))
+}
+
+#[derive(Deserialize)]
+pub struct ChangePasswordReq {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+/// Change one's own password. Verifies the current password and revokes every
+/// existing session (including this one) so all devices must sign in again.
+pub async fn change_password(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Json(req): Json<ChangePasswordReq>,
+) -> Result<Response, ApiError> {
+    let current = melon_db::users::password_hash(&state.pool, user.id)
+        .await?
+        .ok_or_else(|| ApiError::unauthorized("user not found"))?;
+    if !crate::auth::verify_password(&req.current_password, &current) {
+        return Err(ApiError::unauthorized("current password is incorrect"));
+    }
+    crate::auth::validate_password(&req.new_password)?;
+    let hash = crate::auth::hash_password(&req.new_password)?;
+    melon_db::users::set_password_hash(&state.pool, user.id, &hash).await?;
+
+    let mut response = Json(serde_json::json!({ "ok": true })).into_response();
+    response.headers_mut().insert(
+        SET_COOKIE,
+        crate::auth::clear_session_cookie(state.cookie_secure)
+            .parse()
+            .map_err(|_| ApiError::internal("bad cookie"))?,
+    );
+    Ok(response)
+}
+
+// ----- user management -----
+
+#[derive(Deserialize)]
+pub struct CreateUserReq {
+    pub email: String,
+    pub name: String,
+    pub password: String,
+    /// Admin only: `admin` or `merchant`. Ignored for merchant-created staff.
+    pub role: Option<String>,
+    /// Admin only: required when `role == "merchant"`.
+    pub merchant_id: Option<Uuid>,
+}
+
+#[derive(Deserialize)]
+pub struct UserStatusReq {
+    pub status: String,
+}
+
+fn validate_status(status: &str) -> Result<(), ApiError> {
+    if matches!(status, "active" | "disabled") {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request("status must be active or disabled"))
+    }
+}
+
+/// Issuer: list every user.
+pub async fn admin_list_users(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+) -> Result<Json<Vec<UserView>>, ApiError> {
+    let users = melon_db::users::list_users(&state.pool, None).await?;
+    Ok(Json(users.into_iter().map(user_view).collect()))
+}
+
+/// Issuer: create an admin user, or a merchant staff user for any merchant.
+pub async fn admin_create_user(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Json(req): Json<CreateUserReq>,
+) -> Result<(StatusCode, Json<UserView>), ApiError> {
+    let role = req.role.as_deref().unwrap_or("merchant");
+    let merchant_id = match role {
+        "admin" => None,
+        "merchant" => Some(
+            req.merchant_id
+                .ok_or_else(|| ApiError::bad_request("merchant_id is required for a merchant user"))?,
+        ),
+        _ => return Err(ApiError::bad_request("role must be admin or merchant")),
+    };
+    let user = create_user_checked(&state, &req, role, merchant_id).await?;
+    Ok((StatusCode::CREATED, Json(user)))
+}
+
+/// Issuer: enable/disable any user (disabling revokes their sessions).
+pub async fn admin_set_user_status(
+    State(state): State<AppState>,
+    AdminUser(admin): AdminUser,
+    Path(user_id): Path<Uuid>,
+    Json(req): Json<UserStatusReq>,
+) -> Result<Json<Value>, ApiError> {
+    validate_status(&req.status)?;
+    if admin.id == user_id && req.status != "active" {
+        return Err(ApiError::bad_request("you cannot disable your own account"));
+    }
+    melon_db::users::set_user_status(&state.pool, user_id, &req.status).await?;
+    Ok(Json(
+        serde_json::json!({ "user_id": user_id, "status": req.status }),
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct ResetPasswordReq {
+    pub new_password: String,
+}
+
+/// Issuer: reset any user's password (revokes their sessions).
+pub async fn admin_reset_password(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(user_id): Path<Uuid>,
+    Json(req): Json<ResetPasswordReq>,
+) -> Result<Json<Value>, ApiError> {
+    crate::auth::validate_password(&req.new_password)?;
+    let hash = crate::auth::hash_password(&req.new_password)?;
+    melon_db::users::set_password_hash(&state.pool, user_id, &hash).await?;
+    Ok(Json(serde_json::json!({ "user_id": user_id, "ok": true })))
+}
+
+/// Merchant staff: list the users of one's OWN merchant.
+pub async fn list_merchant_users(
+    State(state): State<AppState>,
+    caller: MerchantUser,
+) -> Result<Json<Vec<UserView>>, ApiError> {
+    let users = melon_db::users::list_users(&state.pool, Some(caller.merchant_id)).await?;
+    Ok(Json(users.into_iter().map(user_view).collect()))
+}
+
+/// Merchant staff: add a user to one's OWN merchant. The role and merchant are
+/// forced from the caller — a merchant can never create an admin or reach another
+/// merchant.
+pub async fn create_merchant_user(
+    State(state): State<AppState>,
+    caller: MerchantUser,
+    Json(req): Json<CreateUserReq>,
+) -> Result<(StatusCode, Json<UserView>), ApiError> {
+    let user = create_user_checked(&state, &req, "merchant", Some(caller.merchant_id)).await?;
+    Ok((StatusCode::CREATED, Json(user)))
+}
+
+/// Merchant staff: enable/disable a user of one's OWN merchant.
+pub async fn set_merchant_user_status(
+    State(state): State<AppState>,
+    caller: MerchantUser,
+    Path(user_id): Path<Uuid>,
+    Json(req): Json<UserStatusReq>,
+) -> Result<Json<Value>, ApiError> {
+    validate_status(&req.status)?;
+    if caller.user.id == user_id && req.status != "active" {
+        return Err(ApiError::bad_request("you cannot disable your own account"));
+    }
+    // Scope check: the target must belong to the caller's merchant.
+    let target = melon_db::users::get_user(&state.pool, user_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("user not found"))?;
+    if target.merchant_id != Some(caller.merchant_id) {
+        return Err(ApiError::not_found("user not found"));
+    }
+    melon_db::users::set_user_status(&state.pool, user_id, &req.status).await?;
+    Ok(Json(
+        serde_json::json!({ "user_id": user_id, "status": req.status }),
+    ))
+}
+
+/// Shared creation path: validate the password, hash it, map a duplicate email to 409.
+async fn create_user_checked(
+    state: &AppState,
+    req: &CreateUserReq,
+    role: &str,
+    merchant_id: Option<Uuid>,
+) -> Result<UserView, ApiError> {
+    let email = req.email.trim();
+    if email.is_empty() || !email.contains('@') {
+        return Err(ApiError::bad_request("a valid email is required"));
+    }
+    if req.name.trim().is_empty() {
+        return Err(ApiError::bad_request("name is required"));
+    }
+    crate::auth::validate_password(&req.password)?;
+    let hash = crate::auth::hash_password(&req.password)?;
+
+    let user = melon_db::users::create_user(
+        &state.pool,
+        email,
+        req.name.trim(),
+        &hash,
+        role,
+        merchant_id,
+    )
+    .await?;
+    Ok(user_view(user))
+}
+
+// ----- admin web UI (single-page app served from the binary) -----
+
+/// The admin dashboard shell. Data is fetched client-side with the admin token.
+pub async fn admin_ui() -> Html<&'static str> {
+    Html(include_str!("../static/admin.html"))
+}
+
+/// The merchant portal shell. Data is fetched client-side with the merchant key.
+pub async fn merchant_ui() -> Html<&'static str> {
+    Html(include_str!("../static/merchant.html"))
+}
+
+/// The authenticated merchant's own profile and settlement balance.
+pub async fn me(
+    State(state): State<AppState>,
+    merchant: AuthedMerchant,
+) -> Result<Json<MerchantView>, ApiError> {
+    let m = ops::get_merchant(&state.pool, merchant.merchant_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("merchant not found"))?;
+    Ok(Json(merchant_view(m)))
+}
+
+async fn verify_payment_owner(
+    state: &AppState,
+    payment_id: Uuid,
+    merchant_id: Uuid,
+) -> Result<(), ApiError> {
+    match ops::payment_merchant(&state.pool, payment_id).await? {
+        Some(owner) if owner == merchant_id => Ok(()),
+        // Don't distinguish "not yours" from "not found".
+        _ => Err(ApiError::not_found("payment not found")),
+    }
+}
+
+// ----- health -----
+
+pub async fn healthz(State(state): State<AppState>) -> Json<Value> {
+    Json(serde_json::json!({ "status": "ok", "live_sessions": state.manager.live_sessions() }))
+}
+
+// ----- usable system codes (which systems the server holds keys for) -----
+
+#[derive(Serialize)]
+pub struct SystemCodesResp {
+    /// FeliCa system codes the server can authenticate, ascending.
+    pub system_codes: Vec<u16>,
+}
+
+/// The systems a card may be authenticated under. A terminal polls the card with
+/// the wildcard system code, asks the card which systems it exposes, and picks the
+/// first one that appears in this list.
+pub async fn system_codes(
+    State(state): State<AppState>,
+    _merchant: AuthedMerchant,
+) -> Json<SystemCodesResp> {
+    Json(SystemCodesResp {
+        system_codes: state.manager.system_codes(),
+    })
+}
+
+// ----- mutual authentication (relay to the oracle) -----
+
+pub async fn mutual_authentication(
+    State(state): State<AppState>,
+    merchant: AuthedMerchant,
+    body: Bytes,
+) -> Result<Json<Value>, ApiError> {
+    let input = melon_auth::http::parse_mutual_input(&body)?;
+    let request_session = input.session_id.clone();
+    let mut value = state.manager.handle_mutual_authentication(input).await?;
+
+    // On completion the oracle hands back the RAW card identity (`issue_id` = IDi).
+    // Merchants must never see it: swap the whole `result` for this merchant's
+    // pseudonymous account id. Only the issuer can map it back.
+    if value["step"] == "complete" {
+        let session_id = request_session
+            .or_else(|| value["session_id"].as_str().map(str::to_string))
+            .ok_or_else(|| ApiError::internal("authenticated session id missing"))?;
+        let (sc, idi) = state
+            .manager
+            .authenticated_account(&session_id)
+            .ok_or_else(|| ApiError::internal("authenticated session not found"))?;
+        let account = AccountKey::new(sc, Idi::from_bytes(idi));
+        let account_id = ops::alias_for(&state.pool, merchant.merchant_id, account).await?;
+        value["result"] = serde_json::json!({ "account_id": account_id });
+    }
+    Ok(Json(value))
+}
+
+/// Resolve the merchant-scoped aliases for a set of accounts (creating any that
+/// are missing), so merchant-facing responses can carry pseudonyms only.
+async fn alias_map(
+    state: &AppState,
+    merchant_id: Uuid,
+    accounts: Vec<AccountKey>,
+) -> Result<std::collections::HashMap<AccountKey, Uuid>, ApiError> {
+    let mut map: std::collections::HashMap<AccountKey, Uuid> = std::collections::HashMap::new();
+    for account in accounts {
+        if let std::collections::hash_map::Entry::Vacant(slot) = map.entry(account) {
+            slot.insert(ops::alias_for(&state.pool, merchant_id, account).await?);
+        }
+    }
+    Ok(map)
+}
+
+// ----- balance (read the authenticated card's balance) -----
+
+#[derive(Deserialize)]
+pub struct BalanceReq {
+    pub session_id: String,
+}
+
+#[derive(Serialize)]
+pub struct BucketView {
+    pub bucket_id: Uuid,
+    pub remaining: i64,
+    pub expires_at: Timestamp,
+}
+
+fn bucket_views(bal: ops::BalanceBreakdown) -> Vec<BucketView> {
+    bal.buckets
+        .into_iter()
+        .map(|b| BucketView {
+            bucket_id: b.bucket_id,
+            remaining: b.remaining.as_i64(),
+            expires_at: b.expires_at,
+        })
+        .collect()
+}
+
+/// Merchant-facing balance: the account is identified ONLY by this merchant's
+/// pseudonymous `account_id`.
+#[derive(Serialize)]
+pub struct BalanceResp {
+    pub account_id: Uuid,
+    pub total: i64,
+    pub buckets: Vec<BucketView>,
+}
+
+/// Admin-facing balance: the issuer sees the real card identity.
+#[derive(Serialize)]
+pub struct AdminBalanceResp {
+    pub system_code: u16,
+    pub idi: String,
+    pub total: i64,
+    pub buckets: Vec<BucketView>,
+}
+
+fn admin_balance_resp(account: AccountKey, bal: ops::BalanceBreakdown) -> AdminBalanceResp {
+    AdminBalanceResp {
+        system_code: account.system_code,
+        idi: account.idi.to_hex(),
+        total: bal.total.as_i64(),
+        buckets: bucket_views(bal),
+    }
+}
+
+pub async fn balance(
+    State(state): State<AppState>,
+    merchant: AuthedMerchant,
+    Json(req): Json<BalanceReq>,
+) -> Result<Json<BalanceResp>, ApiError> {
+    let (sc, idi) = state
+        .manager
+        .authenticated_account(&req.session_id)
+        .ok_or_else(|| ApiError::forbidden("session is not authenticated"))?;
+    let account = AccountKey::new(sc, Idi::from_bytes(idi));
+    let account_id = ops::alias_for(&state.pool, merchant.merchant_id, account).await?;
+    let bal = ops::balance(&state.pool, account, now()).await?;
+    Ok(Json(BalanceResp {
+        account_id,
+        total: bal.total.as_i64(),
+        buckets: bucket_views(bal),
+    }))
+}
+
+// ----- top-up -----
+
+#[derive(Deserialize)]
+pub struct TopupReq {
+    pub session_id: String,
+    pub amount: i64,
+}
+
+#[derive(Serialize)]
+pub struct TopupResp {
+    pub transaction_id: Uuid,
+    pub bucket_id: Uuid,
+    pub amount: i64,
+    pub expires_at: Timestamp,
+    pub balance: i64,
+    pub replayed: bool,
+}
+
+pub async fn topup(
+    State(state): State<AppState>,
+    merchant: AuthedMerchant,
+    headers: HeaderMap,
+    Json(req): Json<TopupReq>,
+) -> Result<(StatusCode, Json<TopupResp>), ApiError> {
+    let key = idempotency_key(&headers)?;
+    let amount = positive(req.amount)?;
+    let (sc, idi) = state.manager.consume_spend(&req.session_id)?;
+    let account = AccountKey::new(sc, Idi::from_bytes(idi));
+    let out = ops::top_up(
+        &state.pool,
+        account,
+        Some(merchant.merchant_id),
+        amount,
+        &key,
+        now(),
+        &state.tz,
+    )
+    .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(TopupResp {
+            transaction_id: out.transaction_id,
+            bucket_id: out.bucket_id,
+            amount: out.amount.as_i64(),
+            expires_at: out.expires_at,
+            balance: out.balance.as_i64(),
+            replayed: out.replayed,
+        }),
+    ))
+}
+
+// ----- payment -----
+
+#[derive(Deserialize)]
+pub struct PayReq {
+    pub session_id: String,
+    pub amount: i64,
+}
+
+#[derive(Serialize)]
+pub struct DeductionView {
+    pub bucket_id: Uuid,
+    pub amount: i64,
+}
+
+#[derive(Serialize)]
+pub struct PayResp {
+    pub transaction_id: Uuid,
+    pub amount: i64,
+    /// Processing fee charged to the merchant.
+    pub fee: i64,
+    /// Amount settled to the merchant (`amount − fee`).
+    pub net: i64,
+    pub balance: i64,
+    pub deductions: Vec<DeductionView>,
+    pub replayed: bool,
+}
+
+pub async fn pay(
+    State(state): State<AppState>,
+    merchant: AuthedMerchant,
+    headers: HeaderMap,
+    Json(req): Json<PayReq>,
+) -> Result<(StatusCode, Json<PayResp>), ApiError> {
+    let key = idempotency_key(&headers)?;
+    let amount = positive(req.amount)?;
+    let (sc, idi) = state.manager.consume_spend(&req.session_id)?;
+    let account = AccountKey::new(sc, Idi::from_bytes(idi));
+    let out = ops::pay(
+        &state.pool,
+        account,
+        merchant.merchant_id,
+        amount,
+        &key,
+        now(),
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(payment_response(out))))
+}
+
+fn payment_response(out: ops::Payment) -> PayResp {
+    PayResp {
+        transaction_id: out.transaction_id,
+        amount: out.amount.as_i64(),
+        fee: out.fee.as_i64(),
+        net: out.amount.as_i64() - out.fee.as_i64(),
+        balance: out.balance.as_i64(),
+        deductions: out
+            .deductions
+            .into_iter()
+            .map(|d| DeductionView {
+                bucket_id: d.bucket_id,
+                amount: d.amount.as_i64(),
+            })
+            .collect(),
+        replayed: out.replayed,
+    }
+}
+
+// ----- refund / void -----
+
+#[derive(Deserialize)]
+pub struct RefundReq {
+    pub payment_id: Uuid,
+    pub amount: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub struct RefundResp {
+    pub transaction_id: Uuid,
+    pub payment_id: Uuid,
+    pub amount: i64,
+    pub balance: i64,
+    pub restorations: Vec<DeductionView>,
+    pub replayed: bool,
+}
+
+fn refund_response(out: ops::Refund) -> RefundResp {
+    RefundResp {
+        transaction_id: out.transaction_id,
+        payment_id: out.payment_txn_id,
+        amount: out.amount.as_i64(),
+        balance: out.balance.as_i64(),
+        restorations: out
+            .restorations
+            .into_iter()
+            .map(|d| DeductionView {
+                bucket_id: d.bucket_id,
+                amount: d.amount.as_i64(),
+            })
+            .collect(),
+        replayed: out.replayed,
+    }
+}
+
+pub async fn refund(
+    State(state): State<AppState>,
+    merchant: AuthedMerchant,
+    headers: HeaderMap,
+    Json(req): Json<RefundReq>,
+) -> Result<(StatusCode, Json<RefundResp>), ApiError> {
+    let key = idempotency_key(&headers)?;
+    verify_payment_owner(&state, req.payment_id, merchant.merchant_id).await?;
+    let amount = req.amount.map(positive).transpose()?;
+    let out = ops::refund(&state.pool, req.payment_id, amount, &key, now()).await?;
+    Ok((StatusCode::CREATED, Json(refund_response(out))))
+}
+
+pub async fn void(
+    State(state): State<AppState>,
+    merchant: AuthedMerchant,
+    headers: HeaderMap,
+    Path(payment_id): Path<Uuid>,
+) -> Result<Json<RefundResp>, ApiError> {
+    let key = idempotency_key(&headers)?;
+    verify_payment_owner(&state, payment_id, merchant.merchant_id).await?;
+    let out = ops::void(&state.pool, payment_id, &key, now()).await?;
+    Ok(Json(refund_response(out)))
+}
+
+// ----- refundable payments (list of payments with a positive remainder) -----
+
+/// Merchant-facing refundable payment: pseudonymous `account_id` only.
+#[derive(Serialize)]
+pub struct RefundableView {
+    pub id: Uuid,
+    pub account_id: Uuid,
+    pub amount: i64,
+    pub fee: i64,
+    pub refunded: i64,
+    pub refundable: i64,
+    pub occurred_at: Timestamp,
+}
+
+/// Admin-facing refundable payment: the issuer sees the real card identity.
+#[derive(Serialize)]
+pub struct AdminRefundableView {
+    pub id: Uuid,
+    pub system_code: u16,
+    pub idi: String,
+    pub merchant_id: Option<Uuid>,
+    pub amount: i64,
+    pub fee: i64,
+    pub refunded: i64,
+    pub refundable: i64,
+    pub occurred_at: Timestamp,
+}
+
+fn admin_refundable_view(p: ops::RefundablePayment) -> AdminRefundableView {
+    AdminRefundableView {
+        id: p.id,
+        system_code: p.account.system_code,
+        idi: p.account.idi.to_hex(),
+        merchant_id: p.merchant_id,
+        amount: p.amount.as_i64(),
+        fee: p.fee.as_i64(),
+        refunded: p.refunded.as_i64(),
+        refundable: p.refundable.as_i64(),
+        occurred_at: p.occurred_at,
+    }
+}
+
+#[derive(Deserialize)]
+pub struct RefundableQuery {
+    /// This merchant's pseudonymous account id (from mutual authentication).
+    pub account_id: Option<Uuid>,
+    pub limit: Option<i64>,
+}
+
+/// The caller merchant's refundable payments for one account, addressed by the
+/// merchant's own pseudonymous `account_id`. Used by the terminal kiosk's refund
+/// flow — the raw `(system_code, idi)` is never sent or returned.
+pub async fn refundable(
+    State(state): State<AppState>,
+    merchant: AuthedMerchant,
+    Query(q): Query<RefundableQuery>,
+) -> Result<Json<Vec<RefundableView>>, ApiError> {
+    let account_id = q
+        .account_id
+        .ok_or_else(|| ApiError::bad_request("account_id is required"))?;
+    // Scoped to the caller: another merchant's alias resolves to nothing.
+    let account = ops::account_for_alias(&state.pool, merchant.merchant_id, account_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("account not found"))?;
+    let rows = ops::list_refundable_payments(
+        &state.pool,
+        Some(merchant.merchant_id),
+        Some(account),
+        q.limit.unwrap_or(50),
+    )
+    .await?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|p| RefundableView {
+                id: p.id,
+                account_id,
+                amount: p.amount.as_i64(),
+                fee: p.fee.as_i64(),
+                refunded: p.refunded.as_i64(),
+                refundable: p.refundable.as_i64(),
+                occurred_at: p.occurred_at,
+            })
+            .collect(),
+    ))
+}
+
+// ----- transaction history (scoped to the caller merchant) -----
+
+#[derive(Deserialize)]
+pub struct TxnQuery {
+    pub kind: Option<String>,
+    pub before: Option<String>,
+    pub limit: Option<i64>,
+}
+
+/// Merchant-facing transaction: pseudonymous `account_id` only.
+#[derive(Serialize)]
+pub struct TxnResp {
+    pub id: Uuid,
+    pub account_id: Uuid,
+    pub kind: String,
+    pub merchant_id: Option<Uuid>,
+    pub amount: i64,
+    /// Processing fee (payments only; 0 otherwise).
+    pub fee: i64,
+    pub related_txn_id: Option<Uuid>,
+    pub occurred_at: Timestamp,
+}
+
+/// Admin-facing transaction: the issuer sees the real card identity.
+#[derive(Serialize)]
+pub struct AdminTxnResp {
+    pub id: Uuid,
+    pub system_code: u16,
+    pub idi: String,
+    pub kind: String,
+    pub merchant_id: Option<Uuid>,
+    pub amount: i64,
+    pub fee: i64,
+    pub related_txn_id: Option<Uuid>,
+    pub occurred_at: Timestamp,
+}
+
+pub async fn transactions(
+    State(state): State<AppState>,
+    merchant: AuthedMerchant,
+    Query(q): Query<TxnQuery>,
+) -> Result<Json<Vec<TxnResp>>, ApiError> {
+    let before = q.before.as_deref().map(parse_ts).transpose()?;
+    let filter = ops::TxnFilter {
+        account: None,
+        merchant_id: Some(merchant.merchant_id),
+        kind: q.kind,
+        before,
+        limit: q.limit.unwrap_or(50),
+    };
+    let rows = ops::list_transactions(&state.pool, &filter).await?;
+    let accounts: Vec<AccountKey> = rows.iter().map(|t| t.account).collect();
+    let aliases = alias_map(&state, merchant.merchant_id, accounts).await?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|t| TxnResp {
+                account_id: aliases[&t.account],
+                id: t.id,
+                kind: t.kind,
+                merchant_id: t.merchant_id,
+                amount: t.amount.as_i64(),
+                fee: t.fee.as_i64(),
+                related_txn_id: t.related_txn_id,
+                occurred_at: t.occurred_at,
+            })
+            .collect(),
+    ))
+}
+
+fn admin_txn_view(t: ops::TransactionRow) -> AdminTxnResp {
+    AdminTxnResp {
+        id: t.id,
+        system_code: t.account.system_code,
+        idi: t.account.idi.to_hex(),
+        kind: t.kind,
+        merchant_id: t.merchant_id,
+        amount: t.amount.as_i64(),
+        fee: t.fee.as_i64(),
+        related_txn_id: t.related_txn_id,
+        occurred_at: t.occurred_at,
+    }
+}
+
+/// Admin transaction listing — any merchant/idi/kind, not scoped to the caller.
+#[derive(Deserialize)]
+pub struct AdminTxnQuery {
+    pub merchant_id: Option<Uuid>,
+    pub system_code: Option<String>,
+    pub idi: Option<String>,
+    pub kind: Option<String>,
+    pub before: Option<String>,
+    pub limit: Option<i64>,
+}
+
+pub async fn admin_transactions(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Query(q): Query<AdminTxnQuery>,
+) -> Result<Json<Vec<AdminTxnResp>>, ApiError> {
+    let sc = q.system_code.as_deref().filter(|s| !s.is_empty());
+    let idi = q.idi.as_deref().filter(|s| !s.is_empty());
+    // Filtering by account requires both system_code and IDi (an IDi alone is
+    // ambiguous across systems).
+    let account = match (sc, idi) {
+        (Some(sc), Some(idi)) => Some(AccountKey::new(parse_sc(sc)?, parse_idi(idi)?)),
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(ApiError::bad_request(
+                "filter by account requires both system_code and idi",
+            ));
+        }
+        (None, None) => None,
+    };
+    let before = q
+        .before
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(parse_ts)
+        .transpose()?;
+    let filter = ops::TxnFilter {
+        account,
+        merchant_id: q.merchant_id,
+        kind: q.kind.filter(|s| !s.is_empty()),
+        before,
+        limit: q.limit.unwrap_or(50),
+    };
+    let rows = ops::list_transactions(&state.pool, &filter).await?;
+    Ok(Json(rows.into_iter().map(admin_txn_view).collect()))
+}
+
+/// Admin lookup of any account's balance by (system_code, IDi).
+pub async fn admin_account_balance(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path((system_code, idi)): Path<(String, String)>,
+) -> Result<Json<AdminBalanceResp>, ApiError> {
+    let account = AccountKey::new(parse_sc(&system_code)?, parse_idi(&idi)?);
+    let bal = ops::balance(&state.pool, account, now()).await?;
+    Ok(Json(admin_balance_resp(account, bal)))
+}
+
+// ----- accounts (admin) -----
+
+#[derive(Deserialize)]
+pub struct AccountsQuery {
+    pub limit: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub struct AccountView {
+    pub system_code: u16,
+    pub idi: String,
+    pub status: String,
+    pub balance: i64,
+    pub created_at: Timestamp,
+}
+
+pub async fn list_accounts(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Query(q): Query<AccountsQuery>,
+) -> Result<Json<Vec<AccountView>>, ApiError> {
+    let rows = ops::list_accounts(&state.pool, now(), q.limit.unwrap_or(200)).await?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|a| AccountView {
+                system_code: a.account.system_code,
+                idi: a.account.idi.to_hex(),
+                status: a.status,
+                balance: a.balance.as_i64(),
+                created_at: a.created_at,
+            })
+            .collect(),
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct AdjustReq {
+    /// Signed yen delta: positive credits, negative debits. Non-zero.
+    pub delta: i64,
+    pub reason: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct AdjustResp {
+    pub transaction_id: Uuid,
+    pub delta: i64,
+    pub balance: i64,
+    pub bucket_id: Option<Uuid>,
+}
+
+pub async fn adjust_account(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path((system_code, idi)): Path<(String, String)>,
+    Json(req): Json<AdjustReq>,
+) -> Result<Json<AdjustResp>, ApiError> {
+    let account = AccountKey::new(parse_sc(&system_code)?, parse_idi(&idi)?);
+    if req.delta == 0 {
+        return Err(ApiError::bad_request("delta must be non-zero"));
+    }
+    let reason = req.reason.as_deref().filter(|s| !s.is_empty());
+    let out = ops::adjust(
+        &state.pool,
+        account,
+        melon_core::money::Yen::new(req.delta),
+        reason,
+        now(),
+        &state.tz,
+    )
+    .await?;
+    Ok(Json(AdjustResp {
+        transaction_id: out.transaction_id,
+        delta: out.delta.as_i64(),
+        balance: out.balance.as_i64(),
+        bucket_id: out.bucket_id,
+    }))
+}
+
+// ----- admin: refundable payments + refund/void of any payment -----
+
+#[derive(Deserialize)]
+pub struct AdminRefundableQuery {
+    pub merchant_id: Option<Uuid>,
+    pub system_code: Option<String>,
+    pub idi: Option<String>,
+    pub limit: Option<i64>,
+}
+
+pub async fn admin_refundable(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Query(q): Query<AdminRefundableQuery>,
+) -> Result<Json<Vec<AdminRefundableView>>, ApiError> {
+    let sc = q.system_code.as_deref().filter(|s| !s.is_empty());
+    let idi = q.idi.as_deref().filter(|s| !s.is_empty());
+    let account = match (sc, idi) {
+        (Some(sc), Some(idi)) => Some(AccountKey::new(parse_sc(sc)?, parse_idi(idi)?)),
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(ApiError::bad_request(
+                "filter by account requires both system_code and idi",
+            ));
+        }
+        (None, None) => None,
+    };
+    let rows =
+        ops::list_refundable_payments(&state.pool, q.merchant_id, account, q.limit.unwrap_or(50))
+            .await?;
+    Ok(Json(rows.into_iter().map(admin_refundable_view).collect()))
+}
+
+/// Refund any payment (admin; no merchant-owner check).
+pub async fn admin_refund(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    headers: HeaderMap,
+    Json(req): Json<RefundReq>,
+) -> Result<(StatusCode, Json<RefundResp>), ApiError> {
+    let key = idempotency_key(&headers)?;
+    let amount = req.amount.map(positive).transpose()?;
+    let out = ops::refund(&state.pool, req.payment_id, amount, &key, now()).await?;
+    Ok((StatusCode::CREATED, Json(refund_response(out))))
+}
+
+/// Void (fully reverse) any payment (admin; no merchant-owner check).
+pub async fn admin_void(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    headers: HeaderMap,
+    Path(payment_id): Path<Uuid>,
+) -> Result<Json<RefundResp>, ApiError> {
+    let key = idempotency_key(&headers)?;
+    let out = ops::void(&state.pool, payment_id, &key, now()).await?;
+    Ok(Json(refund_response(out)))
+}
+
+// ----- merchant management (admin) -----
+
+#[derive(Deserialize)]
+pub struct CreateMerchantReq {
+    pub code: String,
+    pub name: String,
+    /// Payment fee in basis points; defaults to the server default if omitted.
+    pub fee_bps: Option<i32>,
+    /// Credit limit (yen); defaults to the server default if omitted.
+    pub credit_limit: Option<i64>,
+}
+
+fn validate_credit_limit(credit_limit: i64) -> Result<i64, ApiError> {
+    if credit_limit >= 0 {
+        Ok(credit_limit)
+    } else {
+        Err(ApiError::bad_request("credit_limit must be >= 0"))
+    }
+}
+
+fn validate_fee_bps(fee_bps: i32) -> Result<i32, ApiError> {
+    if (0..=10000).contains(&fee_bps) {
+        Ok(fee_bps)
+    } else {
+        Err(ApiError::bad_request("fee_bps must be between 0 and 10000"))
+    }
+}
+
+#[derive(Serialize)]
+pub struct CreateMerchantResp {
+    pub merchant_id: Uuid,
+    /// Shown once — the plaintext API secret. Store it now; only its hash is kept.
+    pub api_key: String,
+}
+
+#[derive(Serialize)]
+pub struct MerchantView {
+    pub id: Uuid,
+    pub code: String,
+    pub name: String,
+    pub status: String,
+    /// Payment fee rate in basis points (1 bps = 0.01%).
+    pub fee_bps: i32,
+    /// How far negative the settlement may go when selling top-ups (yen).
+    pub credit_limit: i64,
+    /// Settlement balance: net payments minus top-ups/refunds plus adjustments.
+    pub collected: i64,
+    pub created_at: Timestamp,
+}
+
+fn merchant_view(m: ops::MerchantRow) -> MerchantView {
+    MerchantView {
+        id: m.id,
+        code: m.code,
+        name: m.name,
+        status: m.status,
+        fee_bps: m.fee_bps,
+        credit_limit: m.credit_limit.as_i64(),
+        collected: m.collected.as_i64(),
+        created_at: m.created_at,
+    }
+}
+
+pub async fn list_merchants(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+) -> Result<Json<Vec<MerchantView>>, ApiError> {
+    let rows = ops::list_merchants(&state.pool).await?;
+    Ok(Json(rows.into_iter().map(merchant_view).collect()))
+}
+
+#[derive(Deserialize)]
+pub struct MerchantStatusReq {
+    pub status: String,
+}
+
+pub async fn set_merchant_status(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(merchant_id): Path<Uuid>,
+    Json(req): Json<MerchantStatusReq>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !matches!(req.status.as_str(), "active" | "suspended" | "closed") {
+        return Err(ApiError::bad_request(
+            "status must be active, suspended, or closed",
+        ));
+    }
+    ops::set_merchant_status(&state.pool, merchant_id, &req.status).await?;
+    Ok(Json(
+        serde_json::json!({ "merchant_id": merchant_id, "status": req.status }),
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct MerchantAdjustReq {
+    /// Signed yen delta: positive credits, negative debits. Non-zero.
+    pub delta: i64,
+    pub reason: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct MerchantAdjustResp {
+    pub id: Uuid,
+    pub delta: i64,
+    pub balance: i64,
+}
+
+#[derive(Deserialize)]
+pub struct MerchantFeeReq {
+    pub fee_bps: i32,
+}
+
+pub async fn set_merchant_fee(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(merchant_id): Path<Uuid>,
+    Json(req): Json<MerchantFeeReq>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let fee_bps = validate_fee_bps(req.fee_bps)?;
+    ops::set_merchant_fee(&state.pool, merchant_id, fee_bps).await?;
+    Ok(Json(
+        serde_json::json!({ "merchant_id": merchant_id, "fee_bps": fee_bps }),
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct MerchantCreditReq {
+    pub credit_limit: i64,
+}
+
+pub async fn set_merchant_credit_limit(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(merchant_id): Path<Uuid>,
+    Json(req): Json<MerchantCreditReq>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let credit_limit = validate_credit_limit(req.credit_limit)?;
+    ops::set_merchant_credit_limit(&state.pool, merchant_id, credit_limit).await?;
+    Ok(Json(
+        serde_json::json!({ "merchant_id": merchant_id, "credit_limit": credit_limit }),
+    ))
+}
+
+/// Rotate a merchant's API key: revoke the old one, return a fresh secret (once).
+pub async fn rotate_api_key(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(merchant_id): Path<Uuid>,
+) -> Result<Json<CreateMerchantResp>, ApiError> {
+    let secret = crate::auth::new_secret();
+    ops::rotate_api_key(
+        &state.pool,
+        merchant_id,
+        &crate::auth::sha256_hex(&secret),
+        Some("rotated"),
+    )
+    .await?;
+    Ok(Json(CreateMerchantResp {
+        merchant_id,
+        api_key: secret,
+    }))
+}
+
+pub async fn adjust_merchant(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(merchant_id): Path<Uuid>,
+    Json(req): Json<MerchantAdjustReq>,
+) -> Result<Json<MerchantAdjustResp>, ApiError> {
+    if req.delta == 0 {
+        return Err(ApiError::bad_request("delta must be non-zero"));
+    }
+    let reason = req.reason.as_deref().filter(|s| !s.is_empty());
+    let out = ops::adjust_merchant(
+        &state.pool,
+        merchant_id,
+        melon_core::money::Yen::new(req.delta),
+        reason,
+    )
+    .await?;
+    Ok(Json(MerchantAdjustResp {
+        id: out.id,
+        delta: out.delta.as_i64(),
+        balance: out.balance.as_i64(),
+    }))
+}
+
+pub async fn create_merchant(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Json(req): Json<CreateMerchantReq>,
+) -> Result<(StatusCode, Json<CreateMerchantResp>), ApiError> {
+    let fee_bps = validate_fee_bps(req.fee_bps.unwrap_or(state.default_fee_bps))?;
+    let credit_limit =
+        validate_credit_limit(req.credit_limit.unwrap_or(state.default_credit_limit))?;
+    let merchant_id =
+        ops::create_merchant(&state.pool, &req.code, &req.name, fee_bps, credit_limit).await?;
+    let secret = crate::auth::new_secret();
+    ops::store_api_key(
+        &state.pool,
+        merchant_id,
+        &crate::auth::sha256_hex(&secret),
+        Some("initial"),
+    )
+    .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateMerchantResp {
+            merchant_id,
+            api_key: secret,
+        }),
+    ))
+}
+
+// ----- admin: expiry sweep -----
+
+#[derive(Serialize)]
+pub struct SweepResp {
+    pub ran: bool,
+    pub expired_buckets: i64,
+    pub expired_amount: i64,
+}
+
+pub async fn sweep(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+) -> Result<Json<SweepResp>, ApiError> {
+    let out = ops::expire_due(&state.pool, now(), 500).await?;
+    Ok(Json(SweepResp {
+        ran: out.ran,
+        expired_buckets: out.expired_buckets,
+        expired_amount: out.expired_amount.as_i64(),
+    }))
+}
+
+// ----- admin: outstanding balance report -----
+
+#[derive(Deserialize)]
+pub struct OutstandingQuery {
+    pub as_of: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ExpiryMonthView {
+    pub month: String,
+    pub amount: i64,
+}
+
+#[derive(Serialize)]
+pub struct OutstandingResp {
+    pub as_of: Timestamp,
+    pub total: i64,
+    pub account_count: i64,
+    pub by_expiry_month: Vec<ExpiryMonthView>,
+}
+
+pub async fn outstanding(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Query(q): Query<OutstandingQuery>,
+) -> Result<Json<OutstandingResp>, ApiError> {
+    let as_of = q
+        .as_of
+        .as_deref()
+        .map(parse_ts)
+        .transpose()?
+        .unwrap_or_else(now);
+    let r = ops::outstanding_balance(&state.pool, as_of).await?;
+    Ok(Json(OutstandingResp {
+        as_of: r.as_of,
+        total: r.total.as_i64(),
+        account_count: r.account_count,
+        by_expiry_month: r
+            .by_expiry_month
+            .into_iter()
+            .map(|m| ExpiryMonthView {
+                month: m.month,
+                amount: m.amount.as_i64(),
+            })
+            .collect(),
+    }))
+}
+
+// ----- admin: issuer (発行者) revenue account -----
+
+#[derive(Serialize)]
+pub struct IssuerBalanceResp {
+    /// `fee_income + expiry_income + adjustments`.
+    pub balance: i64,
+    /// Payment fees collected from merchants (cumulative, non-refundable).
+    pub fee_income: i64,
+    /// Forfeited (expired) prepaid balances — breakage income (cumulative).
+    pub expiry_income: i64,
+    /// Net of manual issuer withdrawals (−) and corrections/injections (+).
+    pub adjustments: i64,
+}
+
+pub async fn issuer_balance(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+) -> Result<Json<IssuerBalanceResp>, ApiError> {
+    let b = ops::issuer_balance(&state.pool).await?;
+    Ok(Json(IssuerBalanceResp {
+        balance: b.balance.as_i64(),
+        fee_income: b.fee_income.as_i64(),
+        expiry_income: b.expiry_income.as_i64(),
+        adjustments: b.adjustments.as_i64(),
+    }))
+}
+
+#[derive(Serialize)]
+pub struct IssuerAdjustResp {
+    pub id: Uuid,
+    pub delta: i64,
+    pub balance: i64,
+}
+
+pub async fn adjust_issuer(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Json(req): Json<AdjustReq>,
+) -> Result<Json<IssuerAdjustResp>, ApiError> {
+    if req.delta == 0 {
+        return Err(ApiError::bad_request("delta must be non-zero"));
+    }
+    let reason = req.reason.as_deref().filter(|s| !s.is_empty());
+    let out =
+        ops::adjust_issuer(&state.pool, melon_core::money::Yen::new(req.delta), reason).await?;
+    Ok(Json(IssuerAdjustResp {
+        id: out.id,
+        delta: out.delta.as_i64(),
+        balance: out.balance.as_i64(),
+    }))
+}
+
+#[derive(Serialize)]
+pub struct IssuerAdjustmentView {
+    pub id: Uuid,
+    pub amount: i64,
+    pub note: Option<String>,
+    pub created_at: Timestamp,
+}
+
+pub async fn issuer_adjustments(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Query(q): Query<AccountsQuery>,
+) -> Result<Json<Vec<IssuerAdjustmentView>>, ApiError> {
+    let rows = ops::list_issuer_adjustments(&state.pool, q.limit.unwrap_or(50)).await?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|r| IssuerAdjustmentView {
+                id: r.id,
+                amount: r.amount.as_i64(),
+                note: r.note,
+                created_at: r.created_at,
+            })
+            .collect(),
+    ))
+}

@@ -1,0 +1,58 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["KIRISHIKI Yudai <yudai.kirishiki@protonmail.com>"]
+
+[workspace.dependencies]
+# --- internal crates ---
+melon-core = { path = "crates/melon-core" }
+melon-db = { path = "crates/melon-db" }
+melon-auth = { path = "crates/melon-auth" }
+melon-api-types = { path = "crates/melon-api-types" }
+
+# --- FeliCa ---
+# The oracle/server use `default-features = false` (crypto/protocol only, no
+# rusb); the terminal enables `features = ["usb"]`. Resolved locally via the
+# [patch] below until the usb-feature change is pushed upstream.
+felica-rs = { git = "ssh://git@github.com/soltia48/felica-rs.git", default-features = false }
+
+# --- domain / time / money ---
+jiff = { version = "0.2", features = ["serde"] }
+hex = "0.4"
+# v4 = opaque pseudonyms (v7 would leak the creation timestamp).
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+
+# --- async / web / db ---
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "timeout"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "uuid", "time"] }
+
+# --- user sign-on ---
+# Argon2id: memory-hard password hashing (PHC string format, per-password salt).
+argon2 = "0.5"
+time = "0.3"
+
+# --- serde / errors / logging / cli ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+clap = { version = "4", features = ["derive", "env"] }
+
+# --- crypto (merchant HMAC auth) / misc ---
+hmac = "0.12"
+sha2 = "0.10"
+subtle = "2"
+rand = "0.9"
+flume = "0.11"
+
+[patch."ssh://git@github.com/soltia48/felica-rs.git"]
+felica-rs = { path = "../felica-rs" }
