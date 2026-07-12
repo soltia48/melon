@@ -126,7 +126,7 @@ cargo run -p melon-server     # 起動時に管理者ユーザーを作成
 
 PaSoRi(Sony RC-S380 等)を駆動しフレームを中継する加盟店端末。**要 USB リーダ + 実カード**。2 モードあり、リーダ/相互認証中継/サーバ呼び出しの共通ロジックはライブラリ(`melon_terminal`)を共有します。**モードは引数で決まります**:操作(`--op` または `--amount`)を指定すると CLI 一発実行、指定しなければ **Web UI キオスク(デフォルト)**。
 
-> **ビルド済みバイナリ**: `v*` タグを push すると GitHub Actions([.github/workflows/release.yml](../.github/workflows/release.yml))が Linux(x86_64)・Windows(x86_64)・macOS(Intel / Apple Silicon)向けにビルドし、その Release にアーカイブを添付します。libusb はバンドル(vendored)するため実行環境に libusb のインストールは不要です。CI がプライベート依存 `felica-rs` を取得するため、リポジトリに **`FELICA_RS_TOKEN`** シークレット(`soltia48/felica-rs` を読める PAT)が必要です。
+> **ビルド済みバイナリ**: `v*` タグを push すると GitHub Actions([.github/workflows/release.yml](../.github/workflows/release.yml))が Linux(x86_64 / arm64)・Windows(x86_64)・macOS(Apple Silicon)向けにビルドし、その Release にアーカイブを添付します。libusb はバンドル(vendored)するため実行環境に libusb のインストールは不要です。CI がプライベート依存 `felica-rs` を取得するため、リポジトリに **`FELICA_RS_TOKEN`** シークレット(`soltia48/felica-rs` を読める PAT)が必要です。
 
 **① Web UI キオスク(デフォルト)** — 操作フラグなしで起動すると、リーダを占有する常駐プロセスがローカル Web UI とローカル JSON API を**同一 `http://localhost` オリジン**で提供(CORS/mixed-content 回避)。**起動時にデフォルトブラウザで UI を自動的に開きます**(`--no-open` で抑止)。タッチ操作で決済・チャージ・残高照会:
 

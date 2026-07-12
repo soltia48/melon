@@ -100,7 +100,7 @@ DATABASE_URL=postgres://melon:melon@127.0.0.1:5433/melon cargo test --workspace
 ## CI / CD(GitHub Actions)
 
 - [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — push / PR ごとに `fmt` + `clippy` + `test`(PostgreSQL サービス上で全ワークスペース)。
-- [`.github/workflows/release.yml`](.github/workflows/release.yml) — `v*` タグの push で `melon-terminal` を **Linux / Windows / macOS(Intel・Apple Silicon)** 向けにビルドし、Release に添付。
+- [`.github/workflows/release.yml`](.github/workflows/release.yml) — `v*` タグの push で `melon-terminal` を **Linux(x86_64・arm64)/ Windows(x86_64)/ macOS(Apple Silicon)** 向けにビルドし、Release に添付。
 
 いずれもプライベート依存 `felica-rs` を取得するため、リポジトリシークレット **`FELICA_RS_TOKEN`**(`soltia48/felica-rs` を読める PAT)が必要です。
 
