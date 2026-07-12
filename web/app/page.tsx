@@ -42,7 +42,7 @@ export default function Home() {
             </h1>
             <p className="lead anim d3">
               カードをかざすだけで、支払い・チャージ・残高照会。利用者に専用アプリはいりません。
-              残高はサーバ側の台帳で安全に管理し、相互認証で card-present を検証します。
+              残高はサーバ側の台帳で安全に管理し、相互認証でカードの真正性を検証します。
             </p>
             <div className="actions anim d4">
               <Link className="btn btn-primary" href="/merchant">
