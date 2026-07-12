@@ -4,7 +4,7 @@ import { ToastProvider } from "@/components/toast";
 
 export const metadata: Metadata = {
   title: "Melon",
-  description: "Melon — 前払式支払手段の発行者・加盟店コンソール",
+  description: "Melon — オンライン前払式支払手段プラットフォーム",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
