@@ -126,10 +126,10 @@ struct Creds {
 
 /// How long to wait before retrying to open a missing reader.
 const READER_RETRY: Duration = Duration::from_secs(2);
-/// While idle holding a reader, re-verify it's still connected this often. Detects
-/// an unplug by dropping and reopening the device — the only reliable check here,
-/// so keep it infrequent to avoid needless USB open/close churn.
-const READER_PROBE: Duration = Duration::from_secs(15);
+/// While idle holding a reader, poll it this often to notice a disconnect. This is
+/// a cheap wildcard poll of the *held* device (not a reopen), so it can be frequent
+/// and detects an unplug within roughly this interval.
+const READER_POLL: Duration = Duration::from_secs(1);
 
 /// Shared handles the HTTP loop and the reader worker both hold.
 #[derive(Clone)]
@@ -395,12 +395,31 @@ fn worker(
             }
         }
 
-        // Hold a reader: wait for a job, but wake periodically to re-verify the
-        // reader is still connected (dropping + reopening reveals an unplug).
-        let job = match jobs.recv_timeout(READER_PROBE) {
+        // Hold a reader: wait for a job, but wake periodically to poll the held
+        // reader so an unplug is noticed promptly (a cheap wildcard poll — no
+        // reopen). During a job the poll happens inside `wait_for_card` instead.
+        let job = match jobs.recv_timeout(READER_POLL) {
             Ok(job) => job,
             Err(RecvTimeoutError::Timeout) => {
-                reader = None; // reopen next iteration → refreshes reader_present
+                let gone = match reader.as_mut() {
+                    Some(rt) => matches!(
+                        crate::poll_reader(&mut rt.0, &rt.1),
+                        crate::ReaderPoll::Gone
+                    ),
+                    None => false,
+                };
+                if gone {
+                    reader = None;
+                    if reader_present.swap(false, Ordering::SeqCst) {
+                        tracing::warn!("card reader disconnected");
+                    }
+                    // Surface it if the screen is idle (don't stomp a shown result).
+                    set(&status, |s| {
+                        if !s.is_busy() && s.phase != "select" {
+                            no_reader(s);
+                        }
+                    });
+                }
                 continue;
             }
             Err(RecvTimeoutError::Disconnected) => return,
@@ -421,21 +440,34 @@ fn worker(
             continue;
         };
 
-        let rt = reader.as_mut().expect("reader is held here");
         match job {
             Job::Operate { op, amount } => {
                 tracing::info!(job = "operate", op = %op, amount, "kiosk job started");
-                let Some((_sc, session_id, account_id)) = wait_and_auth(
-                    &mut rt.0,
-                    &rt.1,
-                    &http,
-                    &cfg,
-                    &cancel,
-                    &status,
-                    op.as_str(),
-                    amount,
-                ) else {
-                    continue;
+                let auth = {
+                    let rt = reader.as_mut().expect("reader is held here");
+                    wait_and_auth(
+                        &mut rt.0,
+                        &rt.1,
+                        &http,
+                        &cfg,
+                        &cancel,
+                        &status,
+                        op.as_str(),
+                        amount,
+                    )
+                };
+                let (session_id, account_id) = match auth {
+                    Auth::Ok(_sc, session_id, account_id) => (session_id, account_id),
+                    Auth::Aborted => continue,
+                    // Drop the disconnected reader; the next loop reopens a fresh
+                    // handle when it returns (never a stale one).
+                    Auth::ReaderGone => {
+                        reader = None;
+                        if reader_present.swap(false, Ordering::SeqCst) {
+                            tracing::warn!("card reader disconnected");
+                        }
+                        continue;
+                    }
                 };
                 let card = json!({ "account_id": account_id });
                 set(&status, |s| {
@@ -453,10 +485,22 @@ fn worker(
             }
             Job::RefundLookup => {
                 tracing::info!(job = "refund-lookup", "kiosk job started");
-                let Some((_sc, _session, account_id)) = wait_and_auth(
-                    &mut rt.0, &rt.1, &http, &cfg, &cancel, &status, "refund", None,
-                ) else {
-                    continue;
+                let auth = {
+                    let rt = reader.as_mut().expect("reader is held here");
+                    wait_and_auth(
+                        &mut rt.0, &rt.1, &http, &cfg, &cancel, &status, "refund", None,
+                    )
+                };
+                let account_id = match auth {
+                    Auth::Ok(_sc, _session, account_id) => account_id,
+                    Auth::Aborted => continue,
+                    Auth::ReaderGone => {
+                        reader = None;
+                        if reader_present.swap(false, Ordering::SeqCst) {
+                            tracing::warn!("card reader disconnected");
+                        }
+                        continue;
+                    }
                 };
                 let card = json!({ "account_id": account_id });
                 match crate::list_refundable(&http, &cfg, &account_id) {
@@ -504,9 +548,18 @@ fn worker(
     }
 }
 
+/// Outcome of [`wait_and_auth`] (which sets the status in every case).
+enum Auth {
+    /// Authenticated: `(system_code, session_id, account_id)`.
+    Ok(u16, String, String),
+    /// Cancelled by the operator, or a job failure — nothing more to do here.
+    Aborted,
+    /// The reader was unplugged while waiting; the worker should drop it.
+    ReaderGone,
+}
+
 /// Set the "waiting → authenticating" states and run the card wait + auth shared
-/// by every card-present job. Returns `(system_code, session_id, account_id)` or `None`
-/// (status already set to cancelled/error).
+/// by every card-present job. The status is set in every branch.
 #[allow(clippy::too_many_arguments)]
 fn wait_and_auth(
     reader: &mut felica_rs::prelude::Reader,
@@ -517,19 +570,23 @@ fn wait_and_auth(
     status: &Arc<Mutex<Status>>,
     op_label: &'static str,
     amount: Option<i64>,
-) -> Option<(u16, String, String)> {
+) -> Auth {
     set(status, |s| *s = Status::waiting(op_label, amount));
 
-    // Wildcard-poll until a card is present, honouring cancel. The only retry.
+    // Wildcard-poll until a card is present, honouring cancel and disconnects.
     let poll = match crate::wait_for_card(reader, target, cfg.poll_interval, || {
         cancel
             .load(Ordering::SeqCst)
             .then_some(WaitAbort::Cancelled)
     }) {
         Ok(p) => p,
+        Err(WaitAbort::ReaderGone) => {
+            set(status, no_reader);
+            return Auth::ReaderGone;
+        }
         Err(_) => {
             set(status, |s| *s = Status::idle("キャンセルしました"));
-            return None;
+            return Auth::Aborted;
         }
     };
 
@@ -544,14 +601,14 @@ fn wait_and_auth(
         Ok(c) => c,
         Err(e) => {
             set(status, |s| fail(s, &e));
-            return None;
+            return Auth::Aborted;
         }
     };
     match crate::authenticate(http, cfg, reader, target, card.system_code, &card.poll) {
-        Ok((session_id, account_id)) => Some((card.system_code, session_id, account_id)),
+        Ok((session_id, account_id)) => Auth::Ok(card.system_code, session_id, account_id),
         Err(e) => {
             set(status, |s| fail(s, &e));
-            None
+            Auth::Aborted
         }
     }
 }

@@ -167,7 +167,10 @@ fn run_once(cfg: &Config, once: &OnceArgs, http: &reqwest::blocking::Client) -> 
         Some(d) if Instant::now() >= d => Some(WaitAbort::Timeout),
         _ => None,
     })
-    .map_err(|_| anyhow!("no card presented within {}s", once.timeout_secs))?;
+    .map_err(|abort| match abort {
+        WaitAbort::ReaderGone => anyhow!("card reader disconnected"),
+        _ => anyhow!("no card presented within {}s", once.timeout_secs),
+    })?;
 
     // Phase 2 — a SINGLE attempt: ask the card which systems it has, pick the first
     // the server can authenticate, re-poll it (each system has its own IDm), and

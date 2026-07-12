@@ -108,6 +108,8 @@ pub enum WaitAbort {
     Timeout,
     /// The operator cancelled (serve mode).
     Cancelled,
+    /// The reader was disconnected while waiting.
+    ReaderGone,
 }
 
 /// Open the PaSoRi reader (auto-detect).
@@ -139,10 +141,26 @@ pub fn http_client() -> reqwest::blocking::Client {
     reqwest::blocking::Client::new()
 }
 
+/// The outcome of one wildcard poll — distinguishing a real reader unplug from
+/// the routine "no card on the reader" so callers can react to disconnects.
+pub enum ReaderPoll {
+    /// A card responded.
+    Card(Type3TagPollingResult),
+    /// The reader is present but no card answered.
+    Empty,
+    /// The reader appears disconnected (USB reported "no device").
+    Gone,
+}
+
 /// One wildcard poll: the first system on the card that answers. Its IDm belongs
 /// to THAT system only — a multi-system card must be re-polled with the chosen
 /// system code before authenticating (see [`resolve_card`]).
-pub fn poll_any(reader: &mut Reader, target: &RemoteTarget) -> Option<Type3TagPollingResult> {
+///
+/// A poll can fail two very different ways: no card responded (the reader is fine)
+/// or the reader was unplugged. libusb surfaces the latter as `NoDevice`
+/// (`io::ErrorKind::NotFound`), while a no-card is a timeout — so they're
+/// distinguishable, which lets the kiosk notice a disconnect promptly.
+pub fn poll_reader(reader: &mut Reader, target: &RemoteTarget) -> ReaderPoll {
     match reader
         .driver_mut()
         .detect_type_f(target, WILDCARD_SYSTEM_CODE, 0x00, 0x00)
@@ -153,13 +171,26 @@ pub fn poll_any(reader: &mut Reader, target: &RemoteTarget) -> Option<Type3TagPo
                 pmm = %hex::encode(&poll.pmm),
                 "wildcard poll (0xFFFF): card responded"
             );
-            Some(poll)
+            ReaderPoll::Card(poll)
+        }
+        Err(DriverError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            debug!("wildcard poll (0xFFFF): reader disconnected (USB no-device)");
+            ReaderPoll::Gone
         }
         Err(e) => {
             // The common case while idle: nothing on the reader.
             trace!(error = %e, "wildcard poll (0xFFFF): no card");
-            None
+            ReaderPoll::Empty
         }
+    }
+}
+
+/// [`poll_reader`] reduced to "did a card respond?" (a disconnect counts as no
+/// card). Kept for callers that don't distinguish an unplug.
+pub fn poll_any(reader: &mut Reader, target: &RemoteTarget) -> Option<Type3TagPollingResult> {
+    match poll_reader(reader, target) {
+        ReaderPoll::Card(poll) => Some(poll),
+        ReaderPoll::Empty | ReaderPoll::Gone => None,
     }
 }
 
@@ -178,9 +209,16 @@ pub fn wait_for_card(
         "waiting for a card (wildcard 0xFFFF polling)"
     );
     loop {
-        if let Some(poll) = poll_any(reader, target) {
-            info!(idm = %hex::encode(&poll.idm), "card detected");
-            return Ok(poll);
+        match poll_reader(reader, target) {
+            ReaderPoll::Card(poll) => {
+                info!(idm = %hex::encode(&poll.idm), "card detected");
+                return Ok(poll);
+            }
+            ReaderPoll::Gone => {
+                info!("card wait aborted: reader disconnected");
+                return Err(WaitAbort::ReaderGone);
+            }
+            ReaderPoll::Empty => {}
         }
         if let Some(reason) = should_abort() {
             info!(?reason, "card wait aborted");
