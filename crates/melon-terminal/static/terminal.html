@@ -7,6 +7,7 @@
       content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
     />
     <title>Melon 端末</title>
+    <link rel="icon" type="image/png" href="/logo.png" />
     <style>
       :root {
         --bg: #f4f4f6;
@@ -77,11 +78,11 @@
         font-weight: 700;
         font-size: 15px;
       }
-      .topbar .dot {
-        width: 9px;
-        height: 9px;
-        border-radius: 50%;
-        background: var(--accent);
+      .topbar .brand-logo {
+        width: 24px;
+        height: 24px;
+        border-radius: 6px;
+        display: block;
       }
       .infobtn {
         border: 1px solid var(--line);
@@ -358,7 +359,7 @@
   <body>
     <div id="app">
       <header class="topbar">
-        <div class="brand"><span class="dot"></span> Melon 端末</div>
+        <div class="brand"><img class="brand-logo" src="/logo.png" alt="" /> Melon 端末</div>
         <div style="display: flex; gap: 8px">
           <button class="infobtn" onclick="openSettings(false)">⚙ 設定</button>
           <button class="infobtn" onclick="openInfo()">ⓘ 加盟店情報</button>

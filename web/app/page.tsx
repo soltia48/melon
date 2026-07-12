@@ -4,7 +4,15 @@ export default function Home() {
   return (
     <div className="landing">
       <div style={{ textAlign: "center" }}>
-        <h1 style={{ fontSize: 26 }}>🍈 Melon</h1>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/melon-logo.png"
+          alt="Melon"
+          width={80}
+          height={80}
+          style={{ display: "block", margin: "0 auto 10px", borderRadius: 18 }}
+        />
+        <h1 style={{ fontSize: 26 }}>Melon</h1>
         <p className="muted">オンライン前払式支払手段のコンソール</p>
         <div className="choices">
           <Link href="/admin" className="choice">

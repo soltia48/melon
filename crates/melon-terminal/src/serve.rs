@@ -24,6 +24,9 @@ use crate::{Config, Op, WaitAbort};
 /// The kiosk single-page app, embedded in the binary.
 const INDEX_HTML: &str = include_str!("../static/terminal.html");
 
+/// The Melon logo (favicon + top-bar), embedded in the binary.
+const LOGO_PNG: &[u8] = include_bytes!("../static/melon-logo.png");
+
 /// One queued unit of work for the reader worker.
 enum Job {
     /// Wait for a card, authenticate, then pay / top up / read balance.
@@ -710,6 +713,9 @@ fn handle(mut request: Request, shared: &Shared) {
         (Method::Get, "/") => {
             respond_html(request, INDEX_HTML);
         }
+        (Method::Get, "/logo.png") => {
+            respond_png(request, LOGO_PNG);
+        }
         (Method::Get, "/status") => {
             let mut body = shared
                 .status
@@ -991,6 +997,17 @@ fn respond_html(request: Request, html: &str) {
     let header = Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..])
         .expect("valid header");
     let _ = request.respond(Response::from_string(html).with_header(header));
+}
+
+fn respond_png(request: Request, bytes: &'static [u8]) {
+    let content_type =
+        Header::from_bytes(&b"Content-Type"[..], &b"image/png"[..]).expect("valid header");
+    let cache = Header::from_bytes(&b"Cache-Control"[..], &b"public, max-age=86400"[..])
+        .expect("valid header");
+    let response = Response::from_data(bytes)
+        .with_header(content_type)
+        .with_header(cache);
+    let _ = request.respond(response);
 }
 
 #[cfg(test)]

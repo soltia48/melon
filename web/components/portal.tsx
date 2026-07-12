@@ -138,7 +138,15 @@ function Shell({
     <>
       <header className="topbar">
         <div className="brand">
-          <span className="dot" /> {brand}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/melon-logo.png"
+            alt=""
+            width={22}
+            height={22}
+            style={{ borderRadius: 6, verticalAlign: "middle", marginRight: 6 }}
+          />
+          {brand}
         </div>
         <nav className="tabs">
           {tabs.map((t) => (
@@ -190,7 +198,15 @@ function LoginCard({
   return (
     <div className="login-wrap">
       <div className="login-card">
-        <h1>🍈 {brand}</h1>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/melon-logo.png"
+          alt=""
+          width={56}
+          height={56}
+          style={{ display: "block", margin: "0 auto 10px", borderRadius: 14 }}
+        />
+        <h1>{brand}</h1>
         <p className="muted">アカウントでサインインしてください。</p>
         <input
           type="email"
