@@ -9,7 +9,7 @@
 ## 主要な特徴
 
 - **オンライン相互認証**: サーバが秘密鍵を保持し FeliCa 相互認証を駆動。端末はフレームを中継するだけで、サーバ自身が検証済み IDi を得る(加盟店は IDi を詐称できない)。
-- **複合アカウントキー**: アカウントは `(System Code, IDi)` の組で識別(IDi はシステム内でのみ一意)。
+- **複合アカウントキー**: アカウントは `(System Code, IDm, IDi)` の三つ組で識別(IDi はシステム内でのみ一意)。
 - **不変台帳**: すべての残高変動は追記専用の台帳(`ledger_entries`)に記録。残高はそこから導出。
 - **6ヶ月失効**: チャージ単位のバケットが 6ヶ月(JST 暦)で失効。期限が近い順に消費。
 - **二重支払い防止**: 支払いは 1 トランザクション + 行ロックで、並行時も過剰支出しない。冪等キー対応。
@@ -40,12 +40,14 @@ export MELON_BOOTSTRAP_ADMIN_EMAIL=admin@example.com
 export MELON_BOOTSTRAP_ADMIN_PASSWORD='<10 文字以上>'
 cargo run -p melon-server
 
-# 3. Web 管理画面 / 加盟店ポータル(メール + パスワードでサインイン)
-#    http://127.0.0.1:8080/admin     … 発行者(管理者)アカウント
-#    http://127.0.0.1:8080/merchant  … 加盟店アカウント
+# 3. フロントエンド(別アプリ web/, React/Next.js。メール + パスワードでサインイン)
+cd web && cp .env.local.example .env.local && npm install && npm run dev   # http://localhost:3000
+#    /admin     … 発行者(管理者)アカウント
+#    /merchant  … 加盟店アカウント
 
-# 4. 端末(要 PaSoRi RC-S380 + カード)
-cargo run -p melon-terminal -- --api-key <加盟店APIキー> --op pay --amount 500
+# 4. 端末(要 PaSoRi RC-S380 + カード)。引数なしでキオスク、--op/--amount で CLI 一発実行
+cargo run -p melon-terminal -- --server http://127.0.0.1:8080 \
+  --api-key <加盟店APIキー> --op pay --amount 500
 ```
 
 詳細は各ドキュメントを参照してください。全ワークスペースのテストは `DATABASE_URL=... cargo test --workspace` で実行できます。
