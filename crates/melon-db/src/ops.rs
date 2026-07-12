@@ -884,6 +884,7 @@ pub async fn pay(
     merchant_id: Uuid,
     amount: PositiveYen,
     idempotency_key: &str,
+    note: Option<&str>,
     now: Timestamp,
 ) -> Result<Payment, DbError> {
     let sc = account.system_code as i32;
@@ -911,8 +912,8 @@ pub async fn pay(
 
     let txn_id = Uuid::now_v7();
     let inserted: Option<Uuid> = sqlx::query_scalar(
-        "INSERT INTO transactions (id, system_code, idm, idi, kind, merchant_id, amount, fee, idempotency_key, occurred_at)
-         VALUES ($1, $2, $3, $4, 'payment', $5, $6, $7, $8, $9)
+        "INSERT INTO transactions (id, system_code, idm, idi, kind, merchant_id, amount, fee, idempotency_key, note, occurred_at)
+         VALUES ($1, $2, $3, $4, 'payment', $5, $6, $7, $8, $9, $10)
          ON CONFLICT (kind, idempotency_key) DO NOTHING
          RETURNING id",
     )
@@ -924,6 +925,7 @@ pub async fn pay(
     .bind(amount.as_i64())
     .bind(fee.as_i64())
     .bind(idempotency_key)
+    .bind(note)
     .bind(to_odt(now))
     .fetch_optional(&mut *tx)
     .await?;
@@ -1353,6 +1355,8 @@ pub struct TransactionRow {
     pub amount: Yen,
     /// Processing fee (payments only; 0 otherwise).
     pub fee: Yen,
+    /// Optional free-text note the merchant attached to a payment.
+    pub note: Option<String>,
     pub related_txn_id: Option<Uuid>,
     pub occurred_at: Timestamp,
 }
@@ -1381,7 +1385,7 @@ pub async fn list_transactions(
         filter.limit.min(500)
     };
     let rows = sqlx::query(
-        "SELECT id, system_code, idm, idi, kind, merchant_id, amount, fee, related_txn_id, occurred_at
+        "SELECT id, system_code, idm, idi, kind, merchant_id, amount, fee, note, related_txn_id, occurred_at
            FROM transactions
           WHERE ($1::integer IS NULL OR system_code = $1)
             AND ($2::bytea IS NULL OR idm = $2)
@@ -1411,6 +1415,7 @@ pub async fn list_transactions(
                 merchant_id: r.try_get("merchant_id")?,
                 amount: Yen::new(r.try_get::<i64, _>("amount")?),
                 fee: Yen::new(r.try_get::<i64, _>("fee")?),
+                note: r.try_get("note")?,
                 related_txn_id: r.try_get("related_txn_id")?,
                 occurred_at: to_jiff(r.try_get("occurred_at")?),
             })

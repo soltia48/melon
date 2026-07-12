@@ -177,6 +177,27 @@
         color: var(--muted);
         font-size: 22px;
       }
+      /* memo */
+      .memo-wrap {
+        padding: 0 16px;
+      }
+      .memo {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 13px 14px;
+        font-size: 16px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--card);
+        color: var(--ink);
+      }
+      .memo::placeholder {
+        color: var(--muted);
+      }
+      .memo:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
       /* action */
       .action {
         padding: 8px 16px 20px;
@@ -359,7 +380,9 @@
   <body>
     <div id="app">
       <header class="topbar">
-        <div class="brand"><img class="brand-logo" src="/logo.png" alt="" /> Melon 端末</div>
+        <div class="brand">
+          <img class="brand-logo" src="/logo.png" alt="" /> Melon 端末
+        </div>
         <div style="display: flex; gap: 8px">
           <button class="infobtn" onclick="openSettings(false)">⚙ 設定</button>
           <button class="infobtn" onclick="openInfo()">ⓘ 加盟店情報</button>
@@ -385,6 +408,17 @@
       </div>
 
       <div class="keypad" id="keypad"></div>
+
+      <div id="memoWrap" class="memo-wrap">
+        <input
+          id="memo"
+          class="memo"
+          type="text"
+          maxlength="200"
+          placeholder="メモ(任意)"
+          autocomplete="off"
+        />
+      </div>
 
       <div class="action">
         <button id="go" onclick="start()">支払う</button>
@@ -537,6 +571,9 @@
         const spend = op === "pay" || op === "topup";
         $("keypad").style.display = spend ? "grid" : "none";
         $("amount").style.display = spend ? "block" : "none";
+        // A note is only meaningful on a payment.
+        $("memoWrap").style.display = op === "pay" ? "block" : "none";
+        if (op !== "pay") $("memo").value = "";
         $("hint").textContent = spend
           ? ""
           : op === "balance"
@@ -566,10 +603,15 @@
           } else if (op === "refund") {
             res = await fetch("/op/refund-lookup", { method: "POST" });
           } else {
+            const payload = { amount: amountValue() };
+            if (op === "pay") {
+              const note = $("memo").value.trim();
+              if (note) payload.note = note;
+            }
             res = await fetch("/op/" + op, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ amount: amountValue() }),
+              body: JSON.stringify(payload),
             });
           }
           if (!res.ok && res.status !== 202) {
@@ -852,6 +894,7 @@
         stopPolling();
         closeOverlay();
         digits = "";
+        $("memo").value = "";
         renderAmount();
       }
       function showError(msg) {
@@ -1024,6 +1067,17 @@
       }
 
       // ---- physical keyboard ----
+      // True when the focused element edits its own text (so the keypad shortcuts
+      // must not swallow Backspace/Delete/digits/Enter).
+      function isEditable(el) {
+        if (!el) return false;
+        return (
+          el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.isContentEditable
+        );
+      }
+
       // Mirror the on-screen keypad: digits type the amount, Backspace deletes, Enter
       // runs the operation, Escape clears (or cancels/closes while the overlay is up).
       function handleKeydown(e) {
@@ -1060,6 +1114,9 @@
           }
           return;
         }
+        // A focused text field (the memo) must handle its own editing keys —
+        // Backspace/Delete/digits/Enter belong to the input, not the amount keypad.
+        if (isEditable(e.target)) return;
         if (e.key === "Enter") {
           e.preventDefault();
           if (!$("go").disabled) start();

@@ -30,7 +30,12 @@ const LOGO_PNG: &[u8] = include_bytes!("../static/melon-logo.png");
 /// One queued unit of work for the reader worker.
 enum Job {
     /// Wait for a card, authenticate, then pay / top up / read balance.
-    Operate { op: Op, amount: Option<i64> },
+    Operate {
+        op: Op,
+        amount: Option<i64>,
+        /// Optional merchant note (payments only).
+        note: Option<String>,
+    },
     /// Wait for a card, authenticate, then list that account's refundable
     /// payments (phase 1 of a refund). Ends in the `select` phase.
     RefundLookup,
@@ -444,7 +449,7 @@ fn worker(
         };
 
         match job {
-            Job::Operate { op, amount } => {
+            Job::Operate { op, amount, note } => {
                 tracing::info!(job = "operate", op = %op, amount, "kiosk job started");
                 let auth = {
                     let rt = reader.as_mut().expect("reader is held here");
@@ -478,7 +483,7 @@ fn worker(
                     s.message = "処理中…".into();
                     s.card = Some(card.clone());
                 });
-                match crate::run_operation(&http, &cfg, &session_id, op, amount) {
+                match crate::run_operation(&http, &cfg, &session_id, op, amount, note.as_deref()) {
                     Ok(result) => {
                         tracing::info!(job = "operate", op = %op, "kiosk job done");
                         set(&status, |s| done(s, Some(op.as_str()), result))
@@ -767,17 +772,17 @@ fn handle(mut request: Request, shared: &Shared) {
             }
         }
         (Method::Get, "/op/balance") => {
-            let (code, body) = start_operate(shared, Op::Balance, None);
+            let (code, body) = start_operate(shared, Op::Balance, None, None);
             respond_json(request, code, body);
         }
         (Method::Post, "/op/pay") => {
-            let amount = read_amount(&mut request);
-            let (code, body) = start_operate(shared, Op::Pay, amount);
+            let (amount, note) = read_amount_note(&mut request);
+            let (code, body) = start_operate(shared, Op::Pay, amount, note);
             respond_json(request, code, body);
         }
         (Method::Post, "/op/topup") => {
             let amount = read_amount(&mut request);
-            let (code, body) = start_operate(shared, Op::Topup, amount);
+            let (code, body) = start_operate(shared, Op::Topup, amount, None);
             respond_json(request, code, body);
         }
         (Method::Post, "/op/refund-lookup") => {
@@ -818,7 +823,12 @@ fn blocked(s: &Status) -> Option<(u16, Value)> {
 }
 
 /// Enqueue a pay/topup/balance job unless one is running or the amount is invalid.
-fn start_operate(shared: &Shared, op: Op, amount: Option<i64>) -> (u16, Value) {
+fn start_operate(
+    shared: &Shared,
+    op: Op,
+    amount: Option<i64>,
+    note: Option<String>,
+) -> (u16, Value) {
     if !shared.configured() {
         return (409, json!({ "error": "API キーが設定されていません" }));
     }
@@ -839,7 +849,7 @@ fn start_operate(shared: &Shared, op: Op, amount: Option<i64>) -> (u16, Value) {
         *s = Status::waiting(op.as_str(), amount); // optimistic; worker confirms
     }
     shared.cancel.store(false, Ordering::SeqCst);
-    if shared.jobs.send(Job::Operate { op, amount }).is_err() {
+    if shared.jobs.send(Job::Operate { op, amount, note }).is_err() {
         return (500, json!({ "error": "reader worker unavailable" }));
     }
     (202, json!({ "started": true }))
@@ -966,6 +976,23 @@ fn read_amount(request: &mut Request) -> Option<i64> {
     request.as_reader().read_to_string(&mut body).ok()?;
     let value: Value = serde_json::from_str(&body).ok()?;
     value["amount"].as_i64()
+}
+
+/// Read `{ "amount": <int>, "note"?: <str> }` from a payment request body.
+fn read_amount_note(request: &mut Request) -> (Option<i64>, Option<String>) {
+    let mut body = String::new();
+    if request.as_reader().read_to_string(&mut body).is_err() {
+        return (None, None);
+    }
+    let Ok(value) = serde_json::from_str::<Value>(&body) else {
+        return (None, None);
+    };
+    let note = value["note"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    (value["amount"].as_i64(), note)
 }
 
 /// Read `{ "payment_id": <str>, "amount"?: <int> }` from the request body.

@@ -627,6 +627,22 @@ pub async fn topup(
 pub struct PayReq {
     pub session_id: String,
     pub amount: i64,
+    /// Optional free-text note the merchant attaches to this payment.
+    pub note: Option<String>,
+}
+
+/// Max length (characters) of a merchant-supplied transaction note.
+const MAX_NOTE_LEN: usize = 200;
+
+/// Trim a merchant note, treat blank as absent, and reject over-long input.
+fn clean_note(note: Option<&str>) -> Result<Option<String>, ApiError> {
+    match note.map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok(None),
+        Some(s) if s.chars().count() > MAX_NOTE_LEN => Err(ApiError::bad_request(
+            "note is too long (max 200 characters)",
+        )),
+        Some(s) => Ok(Some(s.to_string())),
+    }
 }
 
 #[derive(Serialize)]
@@ -656,6 +672,7 @@ pub async fn pay(
 ) -> Result<(StatusCode, Json<PayResp>), ApiError> {
     let key = idempotency_key(&headers)?;
     let amount = positive(req.amount)?;
+    let note = clean_note(req.note.as_deref())?;
     let (sc, idm, idi) = state.manager.consume_spend(&req.session_id)?;
     let account = AccountKey::new(sc, Idm::from_bytes(idm), Idi::from_bytes(idi));
     let out = ops::pay(
@@ -664,6 +681,7 @@ pub async fn pay(
         merchant.merchant_id,
         amount,
         &key,
+        note.as_deref(),
         now(),
     )
     .await?;
@@ -857,6 +875,8 @@ pub struct TxnResp {
     pub amount: i64,
     /// Processing fee (payments only; 0 otherwise).
     pub fee: i64,
+    /// Optional free-text note the merchant attached to a payment.
+    pub note: Option<String>,
     pub related_txn_id: Option<Uuid>,
     pub occurred_at: Timestamp,
 }
@@ -872,6 +892,7 @@ pub struct AdminTxnResp {
     pub merchant_id: Option<Uuid>,
     pub amount: i64,
     pub fee: i64,
+    pub note: Option<String>,
     pub related_txn_id: Option<Uuid>,
     pub occurred_at: Timestamp,
 }
@@ -901,6 +922,7 @@ pub async fn transactions(
                 merchant_id: t.merchant_id,
                 amount: t.amount.as_i64(),
                 fee: t.fee.as_i64(),
+                note: t.note,
                 related_txn_id: t.related_txn_id,
                 occurred_at: t.occurred_at,
             })
@@ -918,6 +940,7 @@ fn admin_txn_view(t: ops::TransactionRow) -> AdminTxnResp {
         merchant_id: t.merchant_id,
         amount: t.amount.as_i64(),
         fee: t.fee.as_i64(),
+        note: t.note,
         related_txn_id: t.related_txn_id,
         occurred_at: t.occurred_at,
     }

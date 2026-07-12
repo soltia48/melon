@@ -98,6 +98,7 @@ export default function AdminTransactionsPage() {
                       <th>IDi</th>
                       <th className="num">金額</th>
                       <th>加盟店</th>
+                      <th>メモ</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -112,6 +113,21 @@ export default function AdminTransactionsPage() {
                           <td className="mono">{t.idi}</td>
                           <td className={"num " + sign}>{yen(t.amount)}</td>
                           <td className="mono muted">{t.merchant_id ? t.merchant_id.slice(0, 8) + "…" : "—"}</td>
+                          <td className="muted">
+                            <span
+                              title={t.note ?? undefined}
+                              style={{
+                                display: "inline-block",
+                                maxWidth: 220,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                verticalAlign: "bottom",
+                              }}
+                            >
+                              {t.note || "—"}
+                            </span>
+                          </td>
                         </tr>
                       );
                     })}

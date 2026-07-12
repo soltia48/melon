@@ -87,6 +87,10 @@ struct OnceArgs {
     #[arg(long)]
     amount: Option<i64>,
 
+    /// Optional free-text note to attach to a payment (ignored for other ops).
+    #[arg(long)]
+    note: Option<String>,
+
     /// Give up after this many seconds without an authenticated card
     /// (0 = wait indefinitely).
     #[arg(long, default_value_t = 0)]
@@ -185,7 +189,14 @@ fn run_once(cfg: &Config, once: &OnceArgs, http: &reqwest::blocking::Client) -> 
         &card.poll,
     )?;
 
-    let result = run_operation(http, cfg, &session_id, op, once.amount)?;
+    let result = run_operation(
+        http,
+        cfg,
+        &session_id,
+        op,
+        once.amount,
+        once.note.as_deref(),
+    )?;
     match op {
         Op::Balance => print_balance(&result),
         _ => println!("{}", serde_json::to_string_pretty(&result)?),

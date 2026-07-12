@@ -85,6 +85,7 @@ export interface AdminTxn {
   merchant_id: string | null;
   amount: number;
   fee: number;
+  note: string | null;
   related_txn_id: string | null;
   occurred_at: string;
 }
@@ -97,6 +98,7 @@ export interface MerchantTxn {
   merchant_id: string | null;
   amount: number;
   fee: number;
+  note: string | null;
   related_txn_id: string | null;
   occurred_at: string;
 }

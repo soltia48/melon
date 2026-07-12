@@ -88,6 +88,7 @@ export default function MerchantTransactionsPage() {
                       <th>利用者 ID(仮名)</th>
                       <th className="num">金額</th>
                       <th className="num">手数料</th>
+                      <th>メモ</th>
                       <th>操作</th>
                     </tr>
                   </thead>
@@ -109,6 +110,21 @@ export default function MerchantTransactionsPage() {
                           </td>
                           <td className={"num " + sign}>{disp}</td>
                           <td className="num muted">{t.fee ? yen(t.fee) : "—"}</td>
+                          <td className="muted">
+                            <span
+                              title={t.note ?? undefined}
+                              style={{
+                                display: "inline-block",
+                                maxWidth: 220,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                verticalAlign: "bottom",
+                              }}
+                            >
+                              {t.note || "—"}
+                            </span>
+                          </td>
                           <td>
                             {t.kind === "payment" ? (
                               <>

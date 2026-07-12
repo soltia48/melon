@@ -470,6 +470,7 @@ pub fn run_operation(
     session_id: &str,
     op: Op,
     amount: Option<i64>,
+    note: Option<&str>,
 ) -> Result<Value> {
     match op {
         Op::Balance => {
@@ -501,13 +502,20 @@ pub fn run_operation(
                 idempotency_key = %idem_key,
                 "operation: money movement (consumes the session's one-shot spend)"
             );
+            let mut body = json!({ "session_id": session_id, "amount": amount });
+            // Only payments carry an optional merchant note.
+            if op == Op::Pay {
+                if let Some(n) = note.map(str::trim).filter(|s| !s.is_empty()) {
+                    body["note"] = json!(n);
+                }
+            }
             post(
                 http,
                 &cfg.server,
                 endpoint,
                 &cfg.api_key,
                 Some(&idem_key),
-                &json!({ "session_id": session_id, "amount": amount }),
+                &body,
             )
         }
     }
