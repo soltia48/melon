@@ -48,8 +48,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /src/target/release/melon-server /usr/local/bin/melon-server
 
-# The Web UIs (admin/merchant SPAs) and the SQL migrations are compiled into the
-# binary (`include_str!` / `sqlx::migrate!`), so there is nothing else to ship.
+# The SQL migrations are compiled into the binary (`sqlx::migrate!`), so there is
+# nothing else to ship. The front-end is a separate app (see `web/`); this image
+# is a pure JSON API.
 USER melon:melon
 EXPOSE 8080
 

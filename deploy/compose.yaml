@@ -13,12 +13,18 @@
 #
 #     browsers & terminals ──HTTPS──▶ Cloudflare edge
 #                                          │  (outbound-only tunnel)
-#                                     cloudflared ──▶ server ──▶ db
+#                                     cloudflared ──▶ web ──▶ server ──▶ db
+#
+# The React front-end (`web`, Next.js) serves the admin/merchant UI and
+# reverse-proxies /v1 and /healthz to `server`, so everything the browser sees
+# is one origin and the session cookie flows unchanged (see web/middleware.ts).
+# Terminals also reach the API through the same public hostname (/v1 is proxied).
 #
 # NO INBOUND PORTS. cloudflared dials *out* to Cloudflare, so nothing here
 # publishes a port and no firewall hole is needed. There is no reverse proxy
-# either, so the hardening headers (HSTS/CSP/X-Frame-Options/…) are set by
-# melon-server itself — see `security_headers` in melon-server/src/lib.rs.
+# either: `server` sets its own API hardening headers (see `security_headers` in
+# melon-server/src/lib.rs) and `web` sets baseline headers for its HTML (see
+# web/next.config.mjs).
 #
 # ⚠️ SINGLE INSTANCE. FeliCa mutual-authentication sessions live in the server's
 #    memory, so a card tap and the money operation that follows it MUST reach the
@@ -114,14 +120,49 @@ services:
     stop_grace_period: 20s
     logging: *logging
 
+  # React/Next.js front-end: serves the admin console and merchant portal, and
+  # reverse-proxies /v1 and /healthz to `server` (web/middleware.ts) so the
+  # browser stays on one origin and the session cookie is unchanged. A plain
+  # public image — no private deps, no SSH needed at build time.
+  web:
+    image: melon-web:${MELON_VERSION:-latest}
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      # The API address on the internal network (the compose service name), read
+      # per request by the middleware — NOT localhost.
+      MELON_API_ORIGIN: http://server:8080
+      NODE_ENV: production
+    # Reachable only by cloudflared, on the internal network.
+    expose:
+      - "3000"
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512m }
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+    cap_drop:
+      - ALL
+    stop_grace_period: 10s
+    logging: *logging
+
   # Dashboard-managed ("token") tunnel: the public hostname and the route to this
   # server are configured in Cloudflare Zero Trust, not here.
   #
   #   Zero Trust → Networks → Tunnels → Create a tunnel → Cloudflared
   #     • copy the token into deploy/.env as CLOUDFLARE_TUNNEL_TOKEN
   #     • Public hostname:  melon.example.com
-  #       Service:          HTTP  →  server:8080      ← the compose service name,
-  #                                                      NOT localhost:8080
+  #       Service:          HTTP  →  web:3000        ← the front-end service name,
+  #                                                     which proxies /v1 to server
   #
   # ⚠️ The image is distroless (no shell) and cloudflared has no `*_FILE` support,
   #    so the token must be an environment value — unlike every other secret here.
@@ -132,7 +173,7 @@ services:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     depends_on:
-      server:
+      web:
         condition: service_healthy
     # The image entrypoint is already `cloudflared --no-autoupdate`.
     command: ["tunnel", "run"]

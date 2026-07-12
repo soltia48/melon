@@ -59,11 +59,13 @@
 
 ---
 
-## ヘルスチェック / UI
+## ヘルスチェック
 
 - `GET /healthz` → `{ "status": "ok", "live_sessions": 0 }`
-- `GET /admin` → 管理画面 SPA(HTML)
-- `GET /merchant` → 加盟店ポータル SPA(HTML)
+
+> フロントエンド(管理画面・加盟店ポータル)は別アプリ(`web/`, React/Next.js)です。
+> API サーバ自身は HTML を配信しません(純粋な JSON API)。`web` が同一オリジンで
+> `/v1` をこの API へプロキシします。詳細は [`web/README.md`](../web/README.md)。
 
 ## 仮名化(加盟店は生の (System Code, IDm, IDi) を見られない)
 

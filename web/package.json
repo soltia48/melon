@@ -1,0 +1,24 @@
+{
+  "name": "melon-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Melon front-end (React/Next.js) — issuer admin console and merchant portal. Talks to the melon-server JSON API over a same-origin /v1 proxy.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "15.5.20",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5.9"
+  }
+}

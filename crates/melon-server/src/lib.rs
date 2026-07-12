@@ -30,17 +30,10 @@ use melon_db::Pool;
 
 pub use config::Config;
 
-/// The admin/merchant SPAs are entirely self-contained (no external script,
-/// style, font or image), so the policy can be this tight. `'unsafe-inline'` is
-/// required only because the pages carry their script and style inline.
-const CSP: &str = "default-src 'self'; \
-                   script-src 'self' 'unsafe-inline'; \
-                   style-src 'self' 'unsafe-inline'; \
-                   img-src 'self' data:; \
-                   connect-src 'self'; \
-                   frame-ancestors 'none'; \
-                   base-uri 'none'; \
-                   form-action 'none'";
+/// This is a pure JSON API (the front-end is a separate app — see `web/`), so it
+/// never returns a document that could load a script, style or image. Lock the
+/// policy all the way down to `'none'`.
+const CSP: &str = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
 
 /// Security headers on every response.
 ///
@@ -86,9 +79,6 @@ pub struct AppState {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(handlers::healthz))
-        // Web UI shells (data is fetched with the caller's session cookie).
-        .route("/admin", get(handlers::admin_ui))
-        .route("/merchant", get(handlers::merchant_ui))
         // --- human sign-on ---
         .route("/v1/auth/login", post(handlers::login))
         .route("/v1/auth/logout", post(handlers::logout))

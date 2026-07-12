@@ -699,7 +699,7 @@ async fn security_headers_are_set_on_every_response(pool: PgPool) {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/admin")
+                .uri("/healthz")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -709,9 +709,10 @@ async fn security_headers_are_set_on_every_response(pool: PgPool) {
     assert_eq!(h.get("x-frame-options").unwrap(), "DENY");
     assert_eq!(h.get("x-content-type-options").unwrap(), "nosniff");
     assert_eq!(h.get("referrer-policy").unwrap(), "no-referrer");
+    // A pure JSON API serves no document, so the policy is locked all the way down.
     let csp = h.get("content-security-policy").unwrap().to_str().unwrap();
     assert!(csp.contains("frame-ancestors 'none'"), "csp: {csp}");
-    assert!(csp.contains("default-src 'self'"), "csp: {csp}");
+    assert!(csp.contains("default-src 'none'"), "csp: {csp}");
     // build_app has cookie_secure = false (plain-HTTP test), so HSTS must NOT be
     // sent — pinning it would lock a developer's browser out of http://localhost.
     assert!(

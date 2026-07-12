@@ -11,7 +11,7 @@ use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::header::SET_COOKIE;
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -401,18 +401,6 @@ async fn create_user_checked(
     )
     .await?;
     Ok(user_view(user))
-}
-
-// ----- admin web UI (single-page app served from the binary) -----
-
-/// The admin dashboard shell. Data is fetched client-side with the admin token.
-pub async fn admin_ui() -> Html<&'static str> {
-    Html(include_str!("../static/admin.html"))
-}
-
-/// The merchant portal shell. Data is fetched client-side with the merchant key.
-pub async fn merchant_ui() -> Html<&'static str> {
-    Html(include_str!("../static/merchant.html"))
 }
 
 /// The authenticated merchant's own profile and settlement balance.
