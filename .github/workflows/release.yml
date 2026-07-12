@@ -1,0 +1,121 @@
+# Build melon-terminal for every supported OS/arch when a version tag is pushed,
+# and attach the archives to the GitHub Release for that tag.
+#
+# Targets: Linux x86_64, Windows x86_64, macOS x86_64 (Intel) and macOS arm64
+# (Apple Silicon) — each built natively on its own runner.
+#
+# ── Required secret ────────────────────────────────────────────────────────────
+# `felica-rs` is a PRIVATE git dependency (ssh://git@github.com/soltia48/felica-rs).
+# CI can't use your SSH agent, so it fetches it over HTTPS with a token. Add a
+# repository secret named **FELICA_RS_TOKEN**:
+#   • a fine-grained PAT with *Read* access to `soltia48/felica-rs` (Contents), or
+#   • any token/PAT whose account can read that repo.
+# Without it, the build fails at the `felica-rs` fetch. (libusb is vendored, so no
+# other system dependency or secret is needed.)
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Manual runs build the binaries (for testing the pipeline) but do NOT publish a
+  # release — the release job below only runs for tags.
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the release and upload assets
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04 # older glibc → binary runs on more Linux distros
+            target: x86_64-unknown-linux-gnu
+          - os: macos-13 # Intel
+            target: x86_64-apple-darwin
+          - os: macos-14 # Apple Silicon
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Authorize the private felica-rs dependency
+        shell: bash
+        env:
+          FELICA_RS_TOKEN: ${{ secrets.FELICA_RS_TOKEN }}
+        run: |
+          if [ -z "$FELICA_RS_TOKEN" ]; then
+            echo "::error::FELICA_RS_TOKEN secret is not set — cannot fetch the private felica-rs crate." >&2
+            exit 1
+          fi
+          # Cargo fetches felica-rs from ssh://git@github.com/… ; rewrite that to an
+          # HTTPS URL carrying the token so the build works with no SSH agent.
+          git config --global \
+            url."https://x-access-token:${FELICA_RS_TOKEN}@github.com/".insteadOf \
+            "ssh://git@github.com/"
+
+      - name: Build
+        shell: bash
+        env:
+          # felica-rs is a git dep behind the insteadOf rewrite above; fetch it with
+          # the system git client (also set in .cargo/config.toml, belt-and-suspenders).
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+        run: |
+          cargo build --release --locked \
+            -p melon-terminal \
+            --target ${{ matrix.target }} \
+            --features vendored-libusb
+
+      - name: Package (tar.gz, Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          name="melon-terminal-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          out="target/${{ matrix.target }}/release"
+          mkdir -p dist
+          strip "$out/melon-terminal" || true # smaller binary; never fatal
+          tar -czf "dist/$name.tar.gz" -C "$out" melon-terminal
+
+      - name: Package (zip, Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "melon-terminal-$env:GITHUB_REF_NAME-${{ matrix.target }}"
+          $out  = "target/${{ matrix.target }}/release"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "$out/melon-terminal.exe" -DestinationPath "dist/$name.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: melon-terminal-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    # Only publish for a pushed tag; manual runs just exercise the build.
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true # flatten every target's archive into dist/
+
+      - name: Publish to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

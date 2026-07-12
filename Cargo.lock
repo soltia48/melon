@@ -1460,6 +1460,7 @@ dependencies = [
  "open",
  "rand 0.9.5",
  "reqwest",
+ "rusb",
  "serde_json",
  "tiny_http",
  "tracing",

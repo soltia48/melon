@@ -15,10 +15,20 @@ path = "src/lib.rs"
 name = "melon-terminal"
 path = "src/main.rs"
 
+[features]
+# Statically build libusb from bundled source instead of linking the system
+# library. Off by default (local/dev builds use the system libusb, which is
+# faster); the release CI turns it on so ONE build command produces portable
+# binaries on Linux, macOS and Windows with no system libusb/vcpkg to install.
+vendored-libusb = ["rusb/vendored"]
+
 [dependencies]
 # The only crate that enables the felica-rs `usb` feature — the USB stack lives
 # here, never in the server.
 felica-rs = { workspace = true, features = ["usb"] }
+# Pulled in transitively by felica-rs's `usb` feature; declared directly only so
+# the `vendored-libusb` feature above can toggle libusb vendoring.
+rusb = { version = "0.9", default-features = false }
 clap.workspace = true
 serde_json.workspace = true
 hex.workspace = true
