@@ -1,25 +1,34 @@
-# Melon — production deployment.
+# Melon — production deployment, exposed through Cloudflare Tunnel (cloudflared).
 #
 #   cd deploy
-#   cp env.example .env                     # non-secret config (domain, fees, …)
-#   mkdir -p secrets && chmod 700 secrets   # then create the 4 secret files below
+#   cp env.example .env && chmod 600 .env    # config + the tunnel token
+#   ./init-secrets.sh                        # generates DB / admin passwords
+#   cp /path/to/keys.jsonl secrets/          # FeliCa DES keys
 #   docker compose up -d
+#
+# The tunnel (public hostname → this server) is created in the Cloudflare Zero
+# Trust dashboard; see the `cloudflared` service below.
 #
 # Topology:
 #
-#     internet ──443/80──▶ proxy (Caddy, automatic TLS) ──▶ server ──▶ db
-#                                                              │
-#                                             merchant terminals over HTTPS
+#     browsers & terminals ──HTTPS──▶ Cloudflare edge
+#                                          │  (outbound-only tunnel)
+#                                     cloudflared ──▶ server ──▶ db
 #
-# ⚠️ SINGLE INSTANCE. The FeliCa mutual-authentication sessions live in the
-#    server's memory, so a card tap and the money operation that follows it MUST
-#    reach the same process. Do not scale `server` beyond 1 replica without
-#    sticky sessions — a second replica would fail every payment. (The ledger
-#    itself is in PostgreSQL and would be fine; the auth sessions are not.)
+# NO INBOUND PORTS. cloudflared dials *out* to Cloudflare, so nothing here
+# publishes a port and no firewall hole is needed. There is no reverse proxy
+# either, so the hardening headers (HSTS/CSP/X-Frame-Options/…) are set by
+# melon-server itself — see `security_headers` in melon-server/src/lib.rs.
 #
-# ⚠️ TLS IS REQUIRED. Sign-on cookies are issued with `Secure`, so the browser
-#    only sends them over HTTPS. Terminals also send their API key — never expose
-#    the server on plain HTTP.
+# ⚠️ SINGLE INSTANCE. FeliCa mutual-authentication sessions live in the server's
+#    memory, so a card tap and the money operation that follows it MUST reach the
+#    same process. Do not scale `server` past 1 replica — every payment would fail.
+#    (The ledger is in PostgreSQL and would be fine; the auth sessions are not.)
+#
+# ⚠️ COOKIES STAY `Secure`. TLS is terminated at the Cloudflare edge, so the
+#    *browser* is on HTTPS even though cloudflared→server is plain HTTP inside
+#    this network. `MELON_COOKIE_SECURE=true` is therefore correct — do not turn
+#    it off just because the container speaks HTTP.
 
 # Distinct from the development project (the repo-root compose.yaml is project
 # `melon`). Sharing a project name would make `docker compose down` here tear
@@ -69,7 +78,7 @@ services:
       MELON_BOOTSTRAP_ADMIN_EMAIL: ${MELON_BOOTSTRAP_ADMIN_EMAIL}
       MELON_BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/bootstrap_admin_password
 
-      # Sign-on cookies: TLS is terminated by the proxy, so demand Secure.
+      # The browser reaches us over HTTPS (Cloudflare edge). See the note above.
       MELON_COOKIE_SECURE: "true"
       MELON_USER_SESSION_TTL: ${MELON_USER_SESSION_TTL:-43200}
 
@@ -83,7 +92,7 @@ services:
       - database_url
       - bootstrap_admin_password
       - felica_keys
-    # Not published to the host: only the proxy talks to it.
+    # Reachable only by cloudflared, on the internal network.
     expose:
       - "8080"
     deploy:
@@ -101,24 +110,38 @@ services:
     stop_grace_period: 20s
     logging: *logging
 
-  proxy:
-    image: caddy:2-alpine
+  # Dashboard-managed ("token") tunnel: the public hostname and the route to this
+  # server are configured in Cloudflare Zero Trust, not here.
+  #
+  #   Zero Trust → Networks → Tunnels → Create a tunnel → Cloudflared
+  #     • copy the token into deploy/.env as CLOUDFLARE_TUNNEL_TOKEN
+  #     • Public hostname:  melon.example.com
+  #       Service:          HTTP  →  server:8080      ← the compose service name,
+  #                                                      NOT localhost:8080
+  #
+  # ⚠️ The image is distroless (no shell) and cloudflared has no `*_FILE` support,
+  #    so the token must be an environment value — unlike every other secret here.
+  #    It is therefore visible to anyone who can run `docker inspect` on this host.
+  #    Keep deploy/.env at mode 600, restrict docker-socket access, and rotate the
+  #    token from the dashboard if it leaks (it only authorizes running the tunnel).
+  cloudflared:
+    image: cloudflare/cloudflared:latest
     restart: unless-stopped
     depends_on:
-      - server
+      server:
+        condition: service_healthy
+    # The image entrypoint is already `cloudflared --no-autoupdate`.
+    command: ["tunnel", "run"]
     environment:
-      # The public hostname. Caddy obtains and renews a certificate for it.
-      MELON_DOMAIN: ${MELON_DOMAIN:?set MELON_DOMAIN in deploy/.env}
-      MELON_ACME_EMAIL: ${MELON_ACME_EMAIL:?set MELON_ACME_EMAIL in deploy/.env}
-    ports:
-      - "80:80"     # ACME HTTP-01 challenge + redirect to HTTPS
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data      # certificates — persist or you will hit ACME rate limits
-      - caddy_config:/config
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in deploy/.env}
+    # No `ports:` — the tunnel is an OUTBOUND connection to Cloudflare.
     security_opt:
       - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
     logging: *logging
 
 secrets:
@@ -139,5 +162,3 @@ secrets:
 
 volumes:
   pgdata:
-  caddy_data:
-  caddy_config:

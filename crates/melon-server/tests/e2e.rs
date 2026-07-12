@@ -687,3 +687,47 @@ async fn sign_on_enforces_roles_and_merchant_isolation(pool: PgPool) {
     let (status, _) = send(&app, "GET", "/v1/admin/users", None, None, Value::Null).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
+
+#[sqlx::test(migrations = "../melon-db/migrations")]
+async fn security_headers_are_set_on_every_response(pool: PgPool) {
+    // There is no reverse proxy in front of melon (it is exposed via cloudflared),
+    // so the application itself must send the hardening headers.
+    let app = build_app(pool.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let h = resp.headers();
+    assert_eq!(h.get("x-frame-options").unwrap(), "DENY");
+    assert_eq!(h.get("x-content-type-options").unwrap(), "nosniff");
+    assert_eq!(h.get("referrer-policy").unwrap(), "no-referrer");
+    let csp = h.get("content-security-policy").unwrap().to_str().unwrap();
+    assert!(csp.contains("frame-ancestors 'none'"), "csp: {csp}");
+    assert!(csp.contains("default-src 'self'"), "csp: {csp}");
+    // build_app has cookie_secure = false (plain-HTTP test), so HSTS must NOT be
+    // sent — pinning it would lock a developer's browser out of http://localhost.
+    assert!(
+        h.get("strict-transport-security").is_none(),
+        "HSTS must only be sent when we are really behind TLS"
+    );
+
+    // Error responses carry the headers too (the layer wraps everything).
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/admin/users")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(resp.headers().get("x-frame-options").unwrap(), "DENY");
+}

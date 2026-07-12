@@ -14,6 +14,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
+use axum::extract::{Request, State};
+use axum::http::HeaderValue;
+use axum::http::header::{
+    CONTENT_SECURITY_POLICY, REFERRER_POLICY, STRICT_TRANSPORT_SECURITY, X_CONTENT_TYPE_OPTIONS,
+    X_FRAME_OPTIONS,
+};
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use axum::routing::{get, post};
 use jiff::tz::TimeZone;
 
@@ -21,6 +29,41 @@ use melon_auth::SessionManager;
 use melon_db::Pool;
 
 pub use config::Config;
+
+/// The admin/merchant SPAs are entirely self-contained (no external script,
+/// style, font or image), so the policy can be this tight. `'unsafe-inline'` is
+/// required only because the pages carry their script and style inline.
+const CSP: &str = "default-src 'self'; \
+                   script-src 'self' 'unsafe-inline'; \
+                   style-src 'self' 'unsafe-inline'; \
+                   img-src 'self' data:; \
+                   connect-src 'self'; \
+                   frame-ancestors 'none'; \
+                   base-uri 'none'; \
+                   form-action 'none'";
+
+/// Security headers on every response.
+///
+/// melon is exposed through **cloudflared**, not a reverse proxy, so there is no
+/// proxy layer left to add these — the application must set them itself.
+/// `Strict-Transport-Security` is only sent when cookies are `Secure` (i.e. we
+/// are really behind TLS); pinning HSTS onto a plain-HTTP dev host would lock a
+/// developer's browser out of `http://localhost`.
+async fn security_headers(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    let mut response = next.run(req).await;
+    let headers = response.headers_mut();
+    headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    headers.insert(X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    headers.insert(CONTENT_SECURITY_POLICY, HeaderValue::from_static(CSP));
+    if state.cookie_secure {
+        headers.insert(
+            STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        );
+    }
+    response
+}
 
 /// Shared application state.
 #[derive(Clone)]
@@ -137,6 +180,10 @@ pub fn router(state: AppState) -> Router {
             "/v1/admin/issuer/adjustments",
             get(handlers::issuer_adjustments),
         )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            security_headers,
+        ))
         .with_state(state)
 }
 

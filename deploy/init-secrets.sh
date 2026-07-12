@@ -32,6 +32,7 @@ write_if_absent secrets/database_url "postgres://melon:${DB_PASSWORD}@db:5432/me
 write_if_absent secrets/bootstrap_admin_password "$ADMIN_PASSWORD"
 
 echo
+# Two things cannot be generated — they must be supplied.
 if [[ -e secrets/keys.jsonl ]]; then
   echo "  keep    secrets/keys.jsonl"
 else
@@ -39,10 +40,21 @@ else
   echo "            cp /path/to/keys.jsonl secrets/ && chmod 444 secrets/keys.jsonl"
   echo "          Without it the server cannot authenticate any card."
 fi
+# The Cloudflare tunnel token is the one secret that must live in .env (the
+# distroless cloudflared image cannot read it from a file).
+if grep -qE '^CLOUDFLARE_TUNNEL_TOKEN=.+' .env 2>/dev/null; then
+  echo "  keep    .env CLOUDFLARE_TUNNEL_TOKEN"
+else
+  echo "  MISSING CLOUDFLARE_TUNNEL_TOKEN in deploy/.env — create the tunnel:"
+  echo "            Zero Trust → Networks → Tunnels → Create a tunnel → Cloudflared"
+  echo "            copy the token into deploy/.env, then chmod 600 .env"
+  echo "            Public hostname: <your-host> → HTTP → server:8080"
+  echo "          (service must be server:8080 — the compose service, not localhost)"
+fi
 
 echo
 echo "First sign-in (write these down; the password file is the only copy):"
-echo "  URL      https://<MELON_DOMAIN>/admin"
+echo "  URL      https://<the public hostname you set on the Cloudflare tunnel>/admin"
 echo "  email    \$MELON_BOOTSTRAP_ADMIN_EMAIL (from deploy/.env)"
 echo "  password $(cat secrets/bootstrap_admin_password)"
 echo
