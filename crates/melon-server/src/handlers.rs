@@ -130,8 +130,7 @@ pub async fn login(
     )
     .await?;
 
-    let cookie =
-        crate::auth::session_cookie(&token, state.user_session_ttl, state.cookie_secure);
+    let cookie = crate::auth::session_cookie(&token, state.user_session_ttl, state.cookie_secure);
     let mut response = Json(serde_json::json!({ "user": user_view(user) })).into_response();
     response.headers_mut().insert(
         SET_COOKIE,
@@ -147,7 +146,10 @@ const DUMMY_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHR2YWx1ZQ$\
                           Zm9yY2VzIGEgdmVyaWZ5IHRvIHJ1biBhbmQgZmFpbA";
 
 /// Sign out: revoke the server-side session and clear the cookie.
-pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
+pub async fn logout(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
     if let Some(token) = cookie_value(&headers, crate::auth::SESSION_COOKIE) {
         melon_db::users::delete_session(&state.pool, &crate::auth::sha256_hex(&token)).await?;
     }
@@ -249,14 +251,14 @@ pub async fn admin_create_user(
     Json(req): Json<CreateUserReq>,
 ) -> Result<(StatusCode, Json<UserView>), ApiError> {
     let role = req.role.as_deref().unwrap_or("merchant");
-    let merchant_id = match role {
-        "admin" => None,
-        "merchant" => Some(
-            req.merchant_id
-                .ok_or_else(|| ApiError::bad_request("merchant_id is required for a merchant user"))?,
-        ),
-        _ => return Err(ApiError::bad_request("role must be admin or merchant")),
-    };
+    let merchant_id =
+        match role {
+            "admin" => None,
+            "merchant" => Some(req.merchant_id.ok_or_else(|| {
+                ApiError::bad_request("merchant_id is required for a merchant user")
+            })?),
+            _ => return Err(ApiError::bad_request("role must be admin or merchant")),
+        };
     let user = create_user_checked(&state, &req, role, merchant_id).await?;
     Ok((StatusCode::CREATED, Json(user)))
 }

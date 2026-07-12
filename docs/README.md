@@ -29,13 +29,15 @@
 ## クイックスタート
 
 ```bash
-# 1. 開発用 PostgreSQL(専用コンテナ, ホスト :5433。リポジトリ直下 compose.yaml)
+# 1. 開発用 PostgreSQL(専用コンテナ, ホスト :5433。直下 compose.yaml = 開発専用。本番は deploy/compose.yaml)
 docker compose up -d db
 
 # 2. サーバ起動(migrations は起動時に自動適用)
 export DATABASE_URL=postgres://melon:melon@127.0.0.1:5433/melon
-export MELON_ADMIN_TOKEN=<任意の管理者トークン>
 export MELON_KEYS=keys.jsonl            # FeliCa 鍵(秘匿。リポジトリには含めない)
+# 初回のみ: 最初の管理者ユーザーを作成(管理者が居ない時だけ作成される)
+export MELON_BOOTSTRAP_ADMIN_EMAIL=admin@example.com
+export MELON_BOOTSTRAP_ADMIN_PASSWORD='<10 文字以上>'
 cargo run -p melon-server
 
 # 3. Web 管理画面 / 加盟店ポータル

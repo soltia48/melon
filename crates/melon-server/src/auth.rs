@@ -12,9 +12,9 @@
 
 use std::time::Duration;
 
+use argon2::Argon2;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
-use argon2::Argon2;
 use axum::extract::FromRequestParts;
 use axum::http::header::{AUTHORIZATION, COOKIE};
 use axum::http::request::Parts;

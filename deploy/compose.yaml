@@ -1,0 +1,143 @@
+# Melon — production deployment.
+#
+#   cd deploy
+#   cp env.example .env                     # non-secret config (domain, fees, …)
+#   mkdir -p secrets && chmod 700 secrets   # then create the 4 secret files below
+#   docker compose up -d
+#
+# Topology:
+#
+#     internet ──443/80──▶ proxy (Caddy, automatic TLS) ──▶ server ──▶ db
+#                                                              │
+#                                             merchant terminals over HTTPS
+#
+# ⚠️ SINGLE INSTANCE. The FeliCa mutual-authentication sessions live in the
+#    server's memory, so a card tap and the money operation that follows it MUST
+#    reach the same process. Do not scale `server` beyond 1 replica without
+#    sticky sessions — a second replica would fail every payment. (The ledger
+#    itself is in PostgreSQL and would be fine; the auth sessions are not.)
+#
+# ⚠️ TLS IS REQUIRED. Sign-on cookies are issued with `Secure`, so the browser
+#    only sends them over HTTPS. Terminals also send their API key — never expose
+#    the server on plain HTTP.
+
+# Distinct from the development project (the repo-root compose.yaml is project
+# `melon`). Sharing a project name would make `docker compose down` here tear
+# down the developer's database too.
+name: melon-prod
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: melon
+      POSTGRES_DB: melon
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      # Data checksums catch silent corruption in a ledger we can never rewrite.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    secrets:
+      - db_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # No `ports:` — the database is reachable only on the internal network.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U melon -d melon"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    stop_grace_period: 30s
+    logging: &logging
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  server:
+    image: melon-server:${MELON_VERSION:-latest}
+    build:
+      # The parent of the repo: the workspace [patch] needs ../felica-rs.
+      context: ../..
+      dockerfile: melon/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Secrets arrive as files, never as environment values (see `secrets:`).
+      DATABASE_URL_FILE: /run/secrets/database_url
+      MELON_KEYS: /run/secrets/felica_keys
+      MELON_BOOTSTRAP_ADMIN_EMAIL: ${MELON_BOOTSTRAP_ADMIN_EMAIL}
+      MELON_BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/bootstrap_admin_password
+
+      # Sign-on cookies: TLS is terminated by the proxy, so demand Secure.
+      MELON_COOKIE_SECURE: "true"
+      MELON_USER_SESSION_TTL: ${MELON_USER_SESSION_TTL:-43200}
+
+      MELON_SWEEP_INTERVAL_SECS: ${MELON_SWEEP_INTERVAL_SECS:-3600}
+      MELON_DEFAULT_FEE_BPS: ${MELON_DEFAULT_FEE_BPS:-0}
+      MELON_DEFAULT_CREDIT_LIMIT: ${MELON_DEFAULT_CREDIT_LIMIT:-0}
+      FELICA_SESSION_TTL: ${FELICA_SESSION_TTL:-300}
+      FELICA_MAX_SESSIONS: ${FELICA_MAX_SESSIONS:-1024}
+      RUST_LOG: ${RUST_LOG:-info}
+    secrets:
+      - database_url
+      - bootstrap_admin_password
+      - felica_keys
+    # Not published to the host: only the proxy talks to it.
+    expose:
+      - "8080"
+    deploy:
+      # See the SINGLE INSTANCE note above. Raising this breaks payments.
+      replicas: 1
+      resources:
+        limits: { cpus: "2.0", memory: 1g }
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    stop_grace_period: 20s
+    logging: *logging
+
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - server
+    environment:
+      # The public hostname. Caddy obtains and renews a certificate for it.
+      MELON_DOMAIN: ${MELON_DOMAIN:?set MELON_DOMAIN in deploy/.env}
+      MELON_ACME_EMAIL: ${MELON_ACME_EMAIL:?set MELON_ACME_EMAIL in deploy/.env}
+    ports:
+      - "80:80"     # ACME HTTP-01 challenge + redirect to HTTPS
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data      # certificates — persist or you will hit ACME rate limits
+      - caddy_config:/config
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+
+secrets:
+  # Keep `deploy/secrets/` at mode 700 (the files themselves may be 444 — the
+  # directory is what protects them on the host).
+  db_password:
+    file: ./secrets/db_password
+  # The full connection string, e.g.
+  #   postgres://melon:<same password>@db:5432/melon
+  database_url:
+    file: ./secrets/database_url
+  bootstrap_admin_password:
+    file: ./secrets/bootstrap_admin_password
+  # The FeliCa DES keys. The most sensitive file in the system: with it, anyone
+  # can authenticate cards. Never bake it into the image, never commit it.
+  felica_keys:
+    file: ./secrets/keys.jsonl
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

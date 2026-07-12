@@ -23,12 +23,21 @@
 ## データベース
 
 - **PostgreSQL**(sqlx)。マイグレーションは**サーバ起動時に自動適用**(`sqlx::migrate!`)。
-- 開発用は専用コンテナ `melon-postgres`(ホスト `127.0.0.1:5433`、user/pass/db = melon)。リポジトリ直下 `compose.yaml`:
+- **開発用**は専用コンテナ `melon-postgres`(ホスト `127.0.0.1:5433`、user/pass/db = melon)。リポジトリ直下 `compose.yaml`(compose プロジェクト **`melon`**)。`#[sqlx::test]` がテストごとに一時 DB を作るため、テスト実行にも必要です:
 
 ```bash
 docker compose up -d db
 export DATABASE_URL=postgres://melon:melon@127.0.0.1:5433/melon
 ```
+
+> **compose ファイルは 2 つあり、用途が違います**
+>
+> | ファイル | プロジェクト名 | 用途 |
+> |---|---|---|
+> | `compose.yaml`(直下) | `melon` | **開発専用**。Postgres 1 台のみ(ホスト :5433、認証情報は自明) |
+> | `deploy/compose.yaml` | `melon-prod` | **本番**。Caddy(TLS)+ melon-server + Postgres。ポートはホスト非公開 |
+>
+> プロジェクト名を分けてあるので、`deploy/` での `docker compose down` が開発 DB を巻き込むことはありません。
 
 ### マイグレーション(`crates/melon-db/migrations/`)
 
@@ -67,8 +76,10 @@ export DATABASE_URL=postgres://melon:melon@127.0.0.1:5433/melon
 
 ```bash
 export DATABASE_URL=postgres://melon:melon@127.0.0.1:5433/melon
-export MELON_ADMIN_TOKEN=<管理者トークン>
 export MELON_KEYS=keys.jsonl
+# 初回のみ: 最初の管理者ユーザーを作成(管理者が居ない時だけ作成される)
+export MELON_BOOTSTRAP_ADMIN_EMAIL=admin@example.com
+export MELON_BOOTSTRAP_ADMIN_PASSWORD='<10 文字以上>'
 # 任意: MELON_DEFAULT_FEE_BPS / MELON_DEFAULT_CREDIT_LIMIT など
 cargo run -p melon-server        # 開発
 # 本番向け(rusb フリー成果物): cargo build -p melon-server --release
@@ -177,6 +188,46 @@ cargo run -p melon-terminal -- \
 - カードを検出したら **1 回だけ試行**。サーバの鍵に一致するシステムがカードに無い、認証失敗、サーバエラー、残高不足等、**何らかの失敗で異常終了**(再読み取り・再送はしない)。キオスクでは「対応していないカードです」等を日本語表示。
 - エリア/サービスは **0x0000 固定**。
 - USB アクセス権限が必要(Linux では対象ユーザーが `plugdev` 等に所属、または udev ルール)。
+
+## 本番デプロイ(`deploy/`)
+
+`deploy/compose.yaml` + ルートの `Dockerfile`。構成は **Caddy(TLS 終端・自動証明書)→ melon-server → PostgreSQL**。
+
+```bash
+cd deploy
+cp env.example .env          # 非機密の設定(ドメイン・手数料既定 等)を編集
+./init-secrets.sh            # DB パスワード等を生成(既存ファイルは上書きしない)
+cp /path/to/keys.jsonl secrets/ && chmod 444 secrets/keys.jsonl
+docker compose up -d
+```
+
+### 機密の扱い
+すべて **Docker secrets(ファイル)** で渡し、環境変数には置きません(`docker inspect` や `/proc/<pid>/environ` から読めてしまうため)。サーバは `<VAR>_FILE` に対応しています。
+
+| ファイル | 用途 |
+|---|---|
+| `secrets/keys.jsonl` | **FeliCa DES 鍵。最重要**。これがあれば誰でもカードを認証できる。イメージに焼かない・コミットしない |
+| `secrets/database_url` | `postgres://melon:<pass>@db:5432/melon` |
+| `secrets/db_password` | Postgres の `POSTGRES_PASSWORD_FILE` |
+| `secrets/bootstrap_admin_password` | 初回管理者のパスワード |
+
+`deploy/secrets/` はディレクトリを **700**(ファイルは 444 で可 — ホスト側はディレクトリで守る)。`.gitignore` 済み。
+
+### 譲れない制約
+
+- **⚠️ 単一インスタンス**。FeliCa 相互認証セッションは**サーバのメモリ上**にあるため、カードのタップと後続の金銭操作は**同一プロセス**に届く必要があります。`replicas: 1` を上げるとセッションアフィニティ無しでは**決済が全て失敗**します(台帳は PostgreSQL なのでスケール自体は将来可能)。
+- **⚠️ TLS 必須**。サインオン Cookie は `Secure` 付きで発行するため HTTPS でしか送信されません。端末も API キーを送るので平文 HTTP に晒さないこと。`MELON_COOKIE_SECURE=true` を設定済み。
+- **⚠️ ビルドコンテキストは親ディレクトリ**。ワークスペースが `[patch]` で `../felica-rs` を参照している(usb feature が upstream 未反映)ため、`melon/` と `felica-rs/` の**両方を含む親**をコンテキストにします(`context: ../..`)。upstream に入ったら `[patch]` と felica-rs の COPY を削除し、コンテキストはリポジトリ直下で済みます。
+- サーバは **`-p melon-server` のみ**をビルド(ワークスペース全体だと端末の `usb` feature が統合され rusb がリンクされる)。
+
+### 運用メモ
+
+- **マイグレーションは起動時に自動適用**(`sqlx::migrate!`)。デプロイ順序の考慮は不要。
+- **証明書ボリューム(`caddy_data`)は必ず永続化**。消すと ACME のレート制限に当たります。
+- **DB バックアップ**は別途必須(不変台帳なので復旧不能な損失になる):
+  `docker compose exec -T db pg_dump -U melon melon | gzip > melon-$(date +%F).sql.gz`
+- コンテナは非 root・`read_only`・`cap_drop: ALL`・`no-new-privileges` で実行。DB とサーバのポートはホストに公開しません(公開は Caddy の 80/443 のみ)。
+- ヘルスチェックは `/healthz`(コンテナ + Caddy の両方)。
 
 ## ビルド上の注意
 

@@ -28,9 +28,14 @@ pub struct Config {
 
 impl Config {
     /// Read configuration from the environment. Only `DATABASE_URL` is required.
+    ///
+    /// Secrets may be supplied out-of-band as `<VAR>_FILE` pointing at a file
+    /// (Docker/Kubernetes secrets), so they never appear in the process
+    /// environment where `docker inspect` or `/proc/<pid>/environ` would expose
+    /// them.
     pub fn from_env() -> Result<Self, String> {
-        let database_url =
-            std::env::var("DATABASE_URL").map_err(|_| "DATABASE_URL is required".to_string())?;
+        let database_url = env_secret("DATABASE_URL")
+            .ok_or_else(|| "DATABASE_URL (or DATABASE_URL_FILE) is required".to_string())?;
         let bind_addr = env_or("MELON_BIND", "127.0.0.1:8080");
 
         // Secure cookies are the default; loopback dev over plain HTTP opts out
@@ -41,12 +46,10 @@ impl Config {
         };
 
         let bootstrap_admin = match (
-            std::env::var("MELON_BOOTSTRAP_ADMIN_EMAIL"),
-            std::env::var("MELON_BOOTSTRAP_ADMIN_PASSWORD"),
+            env_secret("MELON_BOOTSTRAP_ADMIN_EMAIL"),
+            env_secret("MELON_BOOTSTRAP_ADMIN_PASSWORD"),
         ) {
-            (Ok(email), Ok(password)) if !email.is_empty() && !password.is_empty() => {
-                Some((email, password))
-            }
+            (Some(email), Some(password)) => Some((email, password)),
             _ => None,
         };
 
@@ -67,12 +70,33 @@ impl Config {
 }
 
 fn is_loopback(bind_addr: &str) -> bool {
-    let host = bind_addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(bind_addr);
-    matches!(host.trim_matches(['[', ']']), "127.0.0.1" | "::1" | "localhost")
+    let host = bind_addr
+        .rsplit_once(':')
+        .map(|(h, _)| h)
+        .unwrap_or(bind_addr);
+    matches!(
+        host.trim_matches(['[', ']']),
+        "127.0.0.1" | "::1" | "localhost"
+    )
 }
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
+/// A secret from `KEY`, or from the file named by `KEY_FILE` (Docker/K8s secrets).
+/// The file's trailing newline is trimmed. Empty values count as absent.
+fn env_secret(key: &str) -> Option<String> {
+    if let Ok(value) = std::env::var(key)
+        && !value.is_empty()
+    {
+        return Some(value);
+    }
+    let path = std::env::var(format!("{key}_FILE")).ok()?;
+    let value = std::fs::read_to_string(&path)
+        .map_err(|e| tracing::error!(%path, error = %e, "failed to read secret file"))
+        .ok()?;
+    Some(value.trim().to_string()).filter(|v| !v.is_empty())
 }
 
 fn parse_u64(key: &str, default: u64) -> u64 {

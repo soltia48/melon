@@ -114,7 +114,10 @@ async fn sign_in(app: &Router, email: &str, password: &str) -> String {
         .expect("login must set a session cookie")
         .to_str()
         .unwrap();
-    assert!(cookie.contains("HttpOnly"), "session cookie must be HttpOnly");
+    assert!(
+        cookie.contains("HttpOnly"),
+        "session cookie must be HttpOnly"
+    );
     assert!(
         cookie.contains("SameSite=Strict"),
         "session cookie must be SameSite=Strict"
@@ -308,7 +311,10 @@ async fn end_to_end_auth_topup_pay_balance(pool: PgPool) {
     assert_eq!(status, StatusCode::OK, "balance: {v}");
     // Pseudonym only — no raw card identity anywhere in the merchant response.
     assert_eq!(v["account_id"], account_id);
-    assert!(v["idi"].is_null() && v["system_code"].is_null(), "raw identity leaked: {v}");
+    assert!(
+        v["idi"].is_null() && v["system_code"].is_null(),
+        "raw identity leaked: {v}"
+    );
     assert_eq!(v["total"], 700);
 
     // Overspending is refused with a localizable code and structured details
@@ -459,73 +465,223 @@ async fn sign_on_enforces_roles_and_merchant_isolation(pool: PgPool) {
     let admin = sign_in_admin(&app, &pool).await;
 
     // Two merchants, each with a staff user created by the issuer.
-    let (_, v) = send(&app, "POST", "/v1/merchants", Some(&admin), None,
-        json!({ "code": "shop-a", "name": "A" })).await;
+    let (_, v) = send(
+        &app,
+        "POST",
+        "/v1/merchants",
+        Some(&admin),
+        None,
+        json!({ "code": "shop-a", "name": "A" }),
+    )
+    .await;
     let merchant_a: uuid::Uuid = v["merchant_id"].as_str().unwrap().parse().unwrap();
-    let (_, v) = send(&app, "POST", "/v1/merchants", Some(&admin), None,
-        json!({ "code": "shop-b", "name": "B" })).await;
+    let (_, v) = send(
+        &app,
+        "POST",
+        "/v1/merchants",
+        Some(&admin),
+        None,
+        json!({ "code": "shop-b", "name": "B" }),
+    )
+    .await;
     let merchant_b: uuid::Uuid = v["merchant_id"].as_str().unwrap().parse().unwrap();
 
-    let (status, _) = send(&app, "POST", "/v1/admin/users", Some(&admin), None,
+    let (status, _) = send(
+        &app,
+        "POST",
+        "/v1/admin/users",
+        Some(&admin),
+        None,
         json!({ "email": "a@shop.test", "name": "A staff", "password": "a-long-password",
-                "role": "merchant", "merchant_id": merchant_a })).await;
+                "role": "merchant", "merchant_id": merchant_a }),
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED);
-    send(&app, "POST", "/v1/admin/users", Some(&admin), None,
+    send(
+        &app,
+        "POST",
+        "/v1/admin/users",
+        Some(&admin),
+        None,
         json!({ "email": "b@shop.test", "name": "B staff", "password": "b-long-password",
-                "role": "merchant", "merchant_id": merchant_b })).await;
+                "role": "merchant", "merchant_id": merchant_b }),
+    )
+    .await;
 
     // Wrong password never signs in; a short password is rejected up front.
-    let (status, _) = send(&app, "POST", "/v1/auth/login", None, None,
-        json!({ "email": "a@shop.test", "password": "wrong" })).await;
+    let (status, _) = send(
+        &app,
+        "POST",
+        "/v1/auth/login",
+        None,
+        None,
+        json!({ "email": "a@shop.test", "password": "wrong" }),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
-    let (status, _) = send(&app, "POST", "/v1/admin/users", Some(&admin), None,
+    let (status, _) = send(
+        &app,
+        "POST",
+        "/v1/admin/users",
+        Some(&admin),
+        None,
         json!({ "email": "short@shop.test", "name": "x", "password": "short",
-                "role": "merchant", "merchant_id": merchant_a })).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "short passwords must be rejected");
+                "role": "merchant", "merchant_id": merchant_a }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "short passwords must be rejected"
+    );
 
     let staff_a = sign_in(&app, "a@shop.test", "a-long-password").await;
 
     // A merchant user cannot reach issuer endpoints.
-    let (status, _) = send(&app, "GET", "/v1/admin/users", Some(&staff_a), None, Value::Null).await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "merchant staff must not be admins");
+    let (status, _) = send(
+        &app,
+        "GET",
+        "/v1/admin/users",
+        Some(&staff_a),
+        None,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "merchant staff must not be admins"
+    );
 
     // A merchant user sees ONLY its own merchant's staff …
     let (status, v) = send(&app, "GET", "/v1/users", Some(&staff_a), None, Value::Null).await;
     assert_eq!(status, StatusCode::OK);
-    let emails: Vec<&str> = v.as_array().unwrap().iter().map(|u| u["email"].as_str().unwrap()).collect();
-    assert_eq!(emails, vec!["a@shop.test"], "must not see another merchant's users");
+    let emails: Vec<&str> = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|u| u["email"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        emails,
+        vec!["a@shop.test"],
+        "must not see another merchant's users"
+    );
 
     // … and any staff it creates is forced onto its own merchant, never admin.
-    let (status, v) = send(&app, "POST", "/v1/users", Some(&staff_a), None,
+    let (status, v) = send(
+        &app,
+        "POST",
+        "/v1/users",
+        Some(&staff_a),
+        None,
         json!({ "email": "a2@shop.test", "name": "A staff 2", "password": "another-long-pw",
-                "role": "admin", "merchant_id": merchant_b })).await;
+                "role": "admin", "merchant_id": merchant_b }),
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(v["role"], "merchant", "a merchant cannot mint an admin");
-    assert_eq!(v["merchant_id"], merchant_a.to_string(), "cannot attach staff to another merchant");
+    assert_eq!(
+        v["merchant_id"],
+        merchant_a.to_string(),
+        "cannot attach staff to another merchant"
+    );
 
     // A merchant user cannot disable another merchant's user.
-    let (_, v) = send(&app, "GET", "/v1/admin/users", Some(&admin), None, Value::Null).await;
-    let b_user = v.as_array().unwrap().iter()
-        .find(|u| u["email"] == "b@shop.test").unwrap()["id"].as_str().unwrap().to_string();
-    let (status, _) = send(&app, "POST", &format!("/v1/users/{b_user}/status"), Some(&staff_a), None,
-        json!({ "status": "disabled" })).await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "cannot touch another merchant's user");
+    let (_, v) = send(
+        &app,
+        "GET",
+        "/v1/admin/users",
+        Some(&admin),
+        None,
+        Value::Null,
+    )
+    .await;
+    let b_user = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["email"] == "b@shop.test")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (status, _) = send(
+        &app,
+        "POST",
+        &format!("/v1/users/{b_user}/status"),
+        Some(&staff_a),
+        None,
+        json!({ "status": "disabled" }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "cannot touch another merchant's user"
+    );
 
     // Disabling a user revokes their live session immediately.
     let (_, v) = send(&app, "GET", "/v1/users", Some(&staff_a), None, Value::Null).await;
-    let a_id = v.as_array().unwrap().iter()
-        .find(|u| u["email"] == "a@shop.test").unwrap()["id"].as_str().unwrap().to_string();
-    let (status, _) = send(&app, "POST", &format!("/v1/admin/users/{a_id}/status"), Some(&admin), None,
-        json!({ "status": "disabled" })).await;
+    let a_id = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["email"] == "a@shop.test")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (status, _) = send(
+        &app,
+        "POST",
+        &format!("/v1/admin/users/{a_id}/status"),
+        Some(&admin),
+        None,
+        json!({ "status": "disabled" }),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    let (status, _) = send(&app, "GET", "/v1/auth/me", Some(&staff_a), None, Value::Null).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "disabling a user must kill their session");
+    let (status, _) = send(
+        &app,
+        "GET",
+        "/v1/auth/me",
+        Some(&staff_a),
+        None,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "disabling a user must kill their session"
+    );
 
     // Signing out revokes the admin's session too.
-    let (status, _) = send(&app, "POST", "/v1/auth/logout", Some(&admin), None, Value::Null).await;
+    let (status, _) = send(
+        &app,
+        "POST",
+        "/v1/auth/logout",
+        Some(&admin),
+        None,
+        Value::Null,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    let (status, _) = send(&app, "GET", "/v1/admin/users", Some(&admin), None, Value::Null).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "logout must revoke the session");
+    let (status, _) = send(
+        &app,
+        "GET",
+        "/v1/admin/users",
+        Some(&admin),
+        None,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "logout must revoke the session"
+    );
 
     // No session at all → 401.
     let (status, _) = send(&app, "GET", "/v1/admin/users", None, None, Value::Null).await;

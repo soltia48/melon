@@ -17,8 +17,8 @@ use felica_rs::felica_standard::{
     FelicaStandardCommand, FelicaStandardResponse, Type3TagPollingResult,
 };
 use felica_rs::prelude::*;
-use tracing::{debug, info, trace, warn};
 use serde_json::{Value, json};
+use tracing::{debug, info, trace, warn};
 
 pub mod serve;
 
@@ -527,7 +527,12 @@ pub fn post(
         req = req.header("Idempotency-Key", key);
     }
     // The bearer (merchant API key) is never logged.
-    debug!(method = "POST", path, idempotent = idempotency_key.is_some(), "→ server");
+    debug!(
+        method = "POST",
+        path,
+        idempotent = idempotency_key.is_some(),
+        "→ server"
+    );
     trace!(method = "POST", path, body = %body, "→ server (request body)");
     let resp = req.send().context("request failed")?;
     let status = resp.status();

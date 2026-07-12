@@ -3,3 +3,7 @@
 # Secret FeliCa key material — never commit.
 keys.jsonl
 *.jsonl
+
+# Production secrets and local deployment config — never commit.
+deploy/secrets/
+deploy/.env

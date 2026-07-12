@@ -95,15 +95,17 @@ pub async fn alias_for(
     let alias = match inserted {
         Some(alias) => alias,
         // Already issued: reuse it so the merchant sees a stable ID.
-        None => sqlx::query_scalar(
-            "SELECT alias FROM merchant_account_aliases
+        None => {
+            sqlx::query_scalar(
+                "SELECT alias FROM merchant_account_aliases
               WHERE merchant_id = $1 AND system_code = $2 AND idi = $3",
-        )
-        .bind(merchant_id)
-        .bind(sc)
-        .bind(idi)
-        .fetch_one(&mut *tx)
-        .await?,
+            )
+            .bind(merchant_id)
+            .bind(sc)
+            .bind(idi)
+            .fetch_one(&mut *tx)
+            .await?
+        }
     };
     tx.commit().await?;
     Ok(alias)

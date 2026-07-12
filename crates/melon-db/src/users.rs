@@ -188,14 +188,12 @@ pub async fn create_session(
     user_id: Uuid,
     expires_at: Timestamp,
 ) -> Result<(), DbError> {
-    sqlx::query(
-        "INSERT INTO user_sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)",
-    )
-    .bind(token_hash)
-    .bind(user_id)
-    .bind(to_odt(expires_at))
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT INTO user_sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)")
+        .bind(token_hash)
+        .bind(user_id)
+        .bind(to_odt(expires_at))
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -236,9 +234,11 @@ pub async fn delete_session(pool: &Pool, token_hash: &str) -> Result<(), DbError
 
 /// Drop sessions that have expired. Returns how many were removed.
 pub async fn purge_expired_sessions(pool: &Pool, now: Timestamp) -> Result<u64, DbError> {
-    Ok(sqlx::query("DELETE FROM user_sessions WHERE expires_at <= $1")
-        .bind(to_odt(now))
-        .execute(pool)
-        .await?
-        .rows_affected())
+    Ok(
+        sqlx::query("DELETE FROM user_sessions WHERE expires_at <= $1")
+            .bind(to_odt(now))
+            .execute(pool)
+            .await?
+            .rows_affected(),
+    )
 }

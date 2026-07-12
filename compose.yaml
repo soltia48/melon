@@ -1,8 +1,19 @@
-# Dedicated PostgreSQL for melon development and tests.
-# Isolated from other projects: distinct container name, volume, and host port 5433.
+# DEVELOPMENT ONLY — PostgreSQL for local work and `cargo test`.
 #
 #   docker compose up -d db
 #   DATABASE_URL=postgres://melon:melon@127.0.0.1:5433/melon
+#
+# `#[sqlx::test]` creates a throwaway database per test on this server, so the
+# test suite needs it running. Credentials are deliberately trivial and the port
+# is bound to loopback only.
+#
+# 👉 PRODUCTION IS ELSEWHERE: `deploy/compose.yaml` (project `melon-prod`) runs
+#    the server + Caddy + a hardened Postgres. Never point it at this one.
+
+# Pinned explicitly (it is also the default, from the directory name) so this can
+# never be confused with the `melon-prod` project.
+name: melon
+
 services:
   db:
     image: postgres:16
