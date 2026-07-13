@@ -537,11 +537,13 @@
       function press(k) {
         if (k === "C") digits = "";
         else if (k === "<") digits = digits.slice(0, -1);
-        else if (digits.length < 7) digits = (digits + k).replace(/^0+/, "");
+        else if (digits.length + k.length <= 7)
+          digits = (digits + k).replace(/^0+/, "");
         renderAmount();
       }
       function buildKeypad() {
-        // テンキー配列(電卓・キーボードのテンキーと同じ 7-8-9 が上段)
+        // テンキー配列(電卓・キーボードのテンキーと同じ 7-8-9 が上段)、
+        // 最下段は 0 / 00 / Backspace
         const keys = [
           "7",
           "8",
@@ -552,16 +554,55 @@
           "1",
           "2",
           "3",
-          "C",
           "0",
+          "00",
           "<",
         ];
         $("keypad").innerHTML = keys
           .map(
             (k) =>
-              `<button class="${k === "C" || k === "<" ? "sub" : ""}" onclick="press('${k}')">${k === "<" ? "⌫" : k}</button>`,
+              `<button data-key="${k}" class="${k === "<" ? "sub" : ""}">${k === "<" ? "⌫" : k}</button>`,
           )
           .join("");
+        $("keypad")
+          .querySelectorAll("button")
+          .forEach((btn) => {
+            const k = btn.dataset.key;
+            if (k === "<") attachBackspace(btn);
+            else btn.onclick = () => press(k);
+          });
+      }
+      // Backspace: tap deletes one digit; press-and-hold clears the whole amount.
+      function attachBackspace(btn) {
+        const LONG_PRESS_MS = 500;
+        let timer = null;
+        let longPressed = false;
+        const start = (e) => {
+          e.preventDefault();
+          longPressed = false;
+          timer = setTimeout(() => {
+            longPressed = true;
+            timer = null;
+            press("C");
+          }, LONG_PRESS_MS);
+        };
+        const end = () => {
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
+            if (!longPressed) press("<");
+          }
+        };
+        const abort = () => {
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
+          }
+        };
+        btn.addEventListener("pointerdown", start);
+        btn.addEventListener("pointerup", end);
+        btn.addEventListener("pointerleave", abort);
+        btn.addEventListener("pointercancel", abort);
       }
 
       // ---- op tabs ----
