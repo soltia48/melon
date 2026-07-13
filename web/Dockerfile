@@ -39,6 +39,10 @@ RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin next
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
+# The Open Graph image route reads its fonts and logo from disk. The PNGs are
+# prerendered, but Next still loads the route module at boot — without these the
+# server crashes on startup, not just when an image is requested.
+COPY --from=builder /app/assets ./assets
 
 USER nextjs
 EXPOSE 3000

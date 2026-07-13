@@ -2,9 +2,17 @@ import type { Metadata } from "next";
 import { DocPage } from "@/components/doc";
 import { renderLegalDoc } from "@/lib/docs";
 
+const TITLE = "加盟店規約";
+const DESCRIPTION = "前払式支払手段「Melon」の加盟店規約。";
+
 export const metadata: Metadata = {
-  title: "加盟店規約 | Melon",
-  description: "前払式支払手段「Melon」の加盟店規約。",
+  title: TITLE,
+  description: DESCRIPTION,
+  openGraph: {
+    title: `${TITLE} | Melon`,
+    description: DESCRIPTION,
+    url: "/merchant-terms",
+  },
 };
 
 export default function MerchantTermsPage() {

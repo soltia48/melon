@@ -5,6 +5,24 @@ const GITHUB = "https://github.com/soltia48/melon";
 const DL_DESKTOP = "https://github.com/soltia48/melon/releases";
 const DL_ANDROID = "https://github.com/soltia48/MelonTerminal-Android/releases";
 
+/** Slashed circle — marks the things a user does NOT have to get hold of. */
+function NoIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M6 18L18 6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export default function Home() {
   return (
     <div className="lp">
@@ -43,9 +61,19 @@ export default function Home() {
               支払いも、チャージも、<span className="hl">一瞬</span>で。
             </h1>
             <p className="lead anim d3">
-              カードをかざすだけで、支払い・チャージ・残高照会。利用者に専用アプリはいりません。
-              残高はサーバ側の台帳で安全に管理し、相互認証でカードの真正性を検証します。
+              利用者が新たに用意するものは、ありません。お手持ちの FeliCa
+              が、そのまま支払い手段になります。残高はサーバ側の台帳で安全に管理し、相互認証でカードの真正性を検証します。
             </p>
+            <ul className="nofuss anim d3">
+              <li>
+                <NoIcon />
+                専用アプリのインストール<b>不要</b>
+              </li>
+              <li>
+                <NoIcon />
+                専用カードの発行<b>不要</b>
+              </li>
+            </ul>
             <div className="actions anim d4">
               <Link className="btn btn-primary" href="/merchant">
                 加盟店ポータルへ <span className="arw">→</span>
@@ -122,8 +150,11 @@ export default function Home() {
               </svg>
             </div>
             <div>
-              <h3>利用者は専用アプリ不要</h3>
-              <p>手持ちの FeliCa が、そのまま使えます。</p>
+              <h3>アプリも専用カードも不要</h3>
+              <p>
+                お手持ちの FeliCa が、そのまま Melon
+                に。新しいカードの発行も待ち時間もありません。
+              </p>
             </div>
           </div>
           <div className="value">
@@ -147,6 +178,12 @@ export default function Home() {
               <p>API キーを入れるだけ。Android でもデスクトップでもすぐに。</p>
             </div>
           </div>
+          {/* 規約 第4条: 対応カードは当社が指定したものに限られる。「どの FeliCa
+              でも使える」と読まれないよう、手軽さの訴求には必ずこの注記を添える。 */}
+          <p className="vnote">
+            ※ ご利用には、当社が対応するものとして指定した FeliCa
+            が必要です。すべての FeliCa でご利用いただけるものではありません。
+          </p>
         </div>
       </section>
 

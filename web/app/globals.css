@@ -606,6 +606,36 @@ tr.clickable:hover td {
   max-width: 42ch;
   margin: 20px 0 0;
 }
+/* The "you need nothing" chips under the hero lead. */
+.lp .nofuss {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 20px 0 0;
+  padding: 0;
+}
+.lp .nofuss li {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  font-size: 0.88rem;
+  color: var(--lp-body);
+}
+.lp .nofuss svg {
+  color: var(--accent);
+  flex: none;
+}
+.lp .nofuss b {
+  margin-left: 6px;
+  color: var(--accent);
+  font-weight: 700;
+}
+
 .lp .hero .actions {
   display: flex;
   gap: 12px;
@@ -772,6 +802,14 @@ tr.clickable:hover td {
     gap: 18px;
   }
 }
+.lp .values .vnote {
+  grid-column: 1 / -1;
+  margin: 4px 0 0;
+  font-size: 0.78rem;
+  color: var(--lp-body);
+  opacity: 0.85;
+}
+
 .lp .value {
   display: flex;
   gap: 14px;

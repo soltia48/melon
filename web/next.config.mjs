@@ -20,6 +20,7 @@ const nextConfig = {
     // Baseline hardening for the HTML the front-end serves. (For /v1 the API's
     // own security headers pass through the proxy; HSTS is applied at the
     // Cloudflare edge in production.)
+    const noindex = [{ key: "X-Robots-Tag", value: "noindex, nofollow" }];
     return [
       {
         source: "/:path*",
@@ -29,6 +30,15 @@ const nextConfig = {
           { key: "Referrer-Policy", value: "no-referrer" },
         ],
       },
+      // The consoles are login screens with nothing to index, and /admin is kept
+      // unlinked on purpose. robots.txt only asks; this tells a crawler that
+      // reached the page anyway to keep it out of the index. Note the portal is
+      // matched exactly and by subtree so that /merchant-terms — a public page —
+      // is not caught by the prefix.
+      { source: "/admin", headers: noindex },
+      { source: "/admin/:path*", headers: noindex },
+      { source: "/merchant", headers: noindex },
+      { source: "/merchant/:path*", headers: noindex },
     ];
   },
 };
