@@ -2,6 +2,7 @@
 
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::{collections::HashSet, process::ExitCode};
 
 use tracing_subscriber::EnvFilter;
 
@@ -45,7 +46,7 @@ async fn run(config: Config) -> Result<(), String> {
     let keystore = KeyStore::from_jsonl(&config.keys_path).map_err(|e| e.message)?;
     let manager = SessionManager::new(
         Arc::new(keystore),
-        None,
+        Some(HashSet::from([0x14])),
         config.session_ttl,
         config.max_sessions,
     );
