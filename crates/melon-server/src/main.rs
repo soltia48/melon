@@ -1,6 +1,5 @@
 //! `melon-server` binary entry point.
 
-use std::process::ExitCode;
 use std::sync::Arc;
 use std::{collections::HashSet, process::ExitCode};
 
@@ -106,7 +105,7 @@ async fn bootstrap_admin(
     };
     let hash = melon_server::auth::hash_password(password)
         .map_err(|_| "failed to hash the bootstrap admin password".to_string())?;
-    melon_db::users::create_user(pool, email, "Administrator", &hash, "admin", None)
+    melon_db::users::create_user(pool, email, "Administrator", &hash, "admin", None, None)
         .await
         .map_err(|e| format!("failed to create the bootstrap admin: {e}"))?;
     tracing::info!(email, "bootstrap admin user created");

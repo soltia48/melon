@@ -15,9 +15,13 @@ export class ApiError extends Error {
   }
 }
 
-type Method = "GET" | "POST" | "PUT" | "DELETE";
+type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
-async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
+async function request<T>(
+  method: Method,
+  path: string,
+  body?: unknown,
+): Promise<T> {
   const headers: Record<string, string> = {};
   // Every mutating call carries a fresh idempotency key (the API requires it for
   // money movements and ignores it elsewhere).
@@ -40,8 +44,13 @@ async function request<T>(method: Method, path: string, body?: unknown): Promise
   }
 
   if (!res.ok) {
-    const err = (data as { error?: { message?: string; code?: string } })?.error;
-    throw new ApiError(err?.message || `HTTP ${res.status}`, res.status, err?.code);
+    const err = (data as { error?: { message?: string; code?: string } })
+      ?.error;
+    throw new ApiError(
+      err?.message || `HTTP ${res.status}`,
+      res.status,
+      err?.code,
+    );
   }
   return data as T;
 }
@@ -49,10 +58,14 @@ async function request<T>(method: Method, path: string, body?: unknown): Promise
 export const api = {
   get: <T>(path: string) => request<T>("GET", path),
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
+  patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
+  del: <T>(path: string) => request<T>("DELETE", path),
 };
 
 /** Build a query string from defined, non-empty params. */
-export function qs(params: Record<string, string | number | undefined | null>): string {
+export function qs(
+  params: Record<string, string | number | undefined | null>,
+): string {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null && v !== "") sp.set(k, String(v));

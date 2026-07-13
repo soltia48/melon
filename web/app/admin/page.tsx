@@ -2,7 +2,13 @@
 
 import { useState } from "react";
 import { api } from "@/lib/api";
-import type { Health, IssuerBalance, Merchant, OutstandingReport, SweepResp } from "@/lib/types";
+import type {
+  Health,
+  IssuerBalance,
+  Merchant,
+  OutstandingReport,
+  SweepResp,
+} from "@/lib/types";
 import { yen } from "@/lib/format";
 import { Async, useAsync, errMsg } from "@/components/ui";
 import { useToast } from "@/components/toast";
@@ -20,7 +26,9 @@ export default function AdminOverview() {
       api.get<OutstandingReport>("/v1/admin/reports/outstanding-balance"),
       api.get<Merchant[]>("/v1/merchants"),
       api.get<IssuerBalance>("/v1/admin/issuer/balance"),
-      api.get<Health>("/healthz").catch(() => ({ status: "?", live_sessions: 0 }) as Health),
+      api
+        .get<Health>("/healthz")
+        .catch(() => ({ status: "?", live_sessions: 0 }) as Health),
     ]);
     return { report, merchants, issuer, health };
   });
@@ -31,10 +39,20 @@ export default function AdminOverview() {
         <>
           <div className="cards">
             <Stat label="未使用残高(合計)" value={yen(report.total)} />
-            <Stat label="発行者残高(収益)" value={yen(issuer.balance)} neg={issuer.balance < 0} />
-            <Stat label="口座数" value={report.account_count.toLocaleString()} />
+            <Stat
+              label="発行者残高(収益)"
+              value={yen(issuer.balance)}
+              neg={issuer.balance < 0}
+            />
+            <Stat
+              label="口座数"
+              value={report.account_count.toLocaleString()}
+            />
             <Stat label="加盟店数" value={merchants.length.toLocaleString()} />
-            <Stat label="ライブセッション" value={(health.live_sessions ?? 0).toLocaleString()} />
+            <Stat
+              label="ライブセッション"
+              value={(health.live_sessions ?? 0).toLocaleString()}
+            />
           </div>
           <SweepPanel />
         </>
@@ -43,7 +61,15 @@ export default function AdminOverview() {
   );
 }
 
-function Stat({ label, value, neg }: { label: string; value: string; neg?: boolean }) {
+function Stat({
+  label,
+  value,
+  neg,
+}: {
+  label: string;
+  value: string;
+  neg?: boolean;
+}) {
   return (
     <div className="stat">
       <div className="label">{label}</div>

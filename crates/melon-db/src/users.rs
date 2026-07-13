@@ -23,6 +23,9 @@ pub struct User {
     pub role: String,
     /// `Some` exactly when `role == "merchant"`.
     pub merchant_id: Option<Uuid>,
+    /// A merchant user's store scope: `None` = merchant-wide admin (all stores);
+    /// `Some` = store user, restricted to that store. Always `None` for `admin`.
+    pub store_id: Option<Uuid>,
     /// `active` or `disabled`.
     pub status: String,
     pub created_at: Timestamp,
@@ -35,12 +38,13 @@ fn map_user(r: sqlx::postgres::PgRow) -> Result<User, DbError> {
         name: r.try_get("name")?,
         role: r.try_get("role")?,
         merchant_id: r.try_get("merchant_id")?,
+        store_id: r.try_get("store_id")?,
         status: r.try_get("status")?,
         created_at: to_jiff(r.try_get("created_at")?),
     })
 }
 
-const USER_COLS: &str = "id, email, name, role, merchant_id, status, created_at";
+const USER_COLS: &str = "id, email, name, role, merchant_id, store_id, status, created_at";
 
 /// Create a user. `password_hash` must already be an Argon2id PHC string — this
 /// layer never sees a plaintext password. `merchant_id` is required for the
@@ -52,11 +56,12 @@ pub async fn create_user(
     password_hash: &str,
     role: &str,
     merchant_id: Option<Uuid>,
+    store_id: Option<Uuid>,
 ) -> Result<User, DbError> {
     let id = Uuid::now_v7();
     let row = sqlx::query(&format!(
-        "INSERT INTO users (id, email, name, password_hash, role, merchant_id)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        "INSERT INTO users (id, email, name, password_hash, role, merchant_id, store_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING {USER_COLS}"
     ))
     .bind(id)
@@ -65,6 +70,7 @@ pub async fn create_user(
     .bind(password_hash)
     .bind(role)
     .bind(merchant_id)
+    .bind(store_id)
     .fetch_one(pool)
     .await;
     match row {

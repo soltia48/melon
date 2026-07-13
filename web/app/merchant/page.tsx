@@ -15,7 +15,9 @@ export default function MerchantOverview() {
           <div className="cards">
             <div className="stat">
               <div className="label">精算残高(発行者からの受取額)</div>
-              <div className={"value" + (me.collected < 0 ? " neg" : "")}>{yen(me.collected)}</div>
+              <div className={"value" + (me.collected < 0 ? " neg" : "")}>
+                {yen(me.collected)}
+              </div>
             </div>
             <div className="stat">
               <div className="label">決済手数料率</div>
@@ -27,7 +29,11 @@ export default function MerchantOverview() {
             </div>
             <div className="stat">
               <div className="label">チャージ可能額(余力)</div>
-              <div className={"value" + (me.collected + me.credit_limit < 0 ? " neg" : "")}>
+              <div
+                className={
+                  "value" + (me.collected + me.credit_limit < 0 ? " neg" : "")
+                }
+              >
                 {yen(me.collected + me.credit_limit)}
               </div>
             </div>

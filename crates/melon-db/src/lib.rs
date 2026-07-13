@@ -31,6 +31,10 @@ pub enum DbError {
     AccountNotFound,
     #[error("merchant not found")]
     MerchantNotFound,
+    #[error("store not found")]
+    StoreNotFound,
+    #[error("that store code is already in use for this merchant")]
+    StoreCodeTaken,
     #[error("user not found")]
     UserNotFound,
     #[error("that email is already registered")]

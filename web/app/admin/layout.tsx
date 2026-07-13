@@ -12,7 +12,11 @@ const TABS: Tab[] = [
   { href: "/admin/users", label: "ユーザー" },
 ];
 
-export default function AdminLayout({ children }: { children: React.ReactNode }) {
+export default function AdminLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <PortalShell role="admin" brand="Melon 管理画面" tabs={TABS}>
       {children}

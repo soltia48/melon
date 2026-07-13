@@ -108,6 +108,9 @@ pub struct UserView {
     /// `admin` or `merchant`.
     pub role: String,
     pub merchant_id: Option<Uuid>,
+    /// A merchant user's store scope: `null` = merchant-wide admin (all stores),
+    /// otherwise the single store they are restricted to.
+    pub store_id: Option<Uuid>,
     pub status: String,
     pub created_at: Timestamp,
 }
@@ -119,6 +122,7 @@ fn user_view(u: melon_db::users::User) -> UserView {
         name: u.name,
         role: u.role,
         merchant_id: u.merchant_id,
+        store_id: u.store_id,
         status: u.status,
         created_at: u.created_at,
     }
@@ -251,6 +255,10 @@ pub struct CreateUserReq {
     pub role: Option<String>,
     /// Admin only: required when `role == "merchant"`.
     pub merchant_id: Option<Uuid>,
+    /// Optional store scope for a merchant user. `null` = merchant-wide admin
+    /// (all stores); otherwise the store this user is restricted to (must belong
+    /// to the user's merchant).
+    pub store_id: Option<Uuid>,
 }
 
 #[derive(Deserialize)]
@@ -290,7 +298,9 @@ pub async fn admin_create_user(
             })?),
             _ => return Err(ApiError::bad_request("role must be admin or merchant")),
         };
-    let user = create_user_checked(&state, &req, role, merchant_id).await?;
+    // A store scope is only meaningful for a merchant user.
+    let store_id = if role == "admin" { None } else { req.store_id };
+    let user = create_user_checked(&state, &req, role, merchant_id, store_id).await?;
     Ok((StatusCode::CREATED, Json(user)))
 }
 
@@ -334,6 +344,7 @@ pub async fn list_merchant_users(
     State(state): State<AppState>,
     caller: MerchantUser,
 ) -> Result<Json<Vec<UserView>>, ApiError> {
+    require_merchant_admin(&caller)?;
     let users = melon_db::users::list_users(&state.pool, Some(caller.merchant_id)).await?;
     Ok(Json(users.into_iter().map(user_view).collect()))
 }
@@ -346,7 +357,17 @@ pub async fn create_merchant_user(
     caller: MerchantUser,
     Json(req): Json<CreateUserReq>,
 ) -> Result<(StatusCode, Json<UserView>), ApiError> {
-    let user = create_user_checked(&state, &req, "merchant", Some(caller.merchant_id)).await?;
+    require_merchant_admin(&caller)?;
+    // The new user's store scope (if any) must belong to the caller's merchant —
+    // validated inside create_user_checked.
+    let user = create_user_checked(
+        &state,
+        &req,
+        "merchant",
+        Some(caller.merchant_id),
+        req.store_id,
+    )
+    .await?;
     Ok((StatusCode::CREATED, Json(user)))
 }
 
@@ -357,6 +378,7 @@ pub async fn set_merchant_user_status(
     Path(user_id): Path<Uuid>,
     Json(req): Json<UserStatusReq>,
 ) -> Result<Json<Value>, ApiError> {
+    require_merchant_admin(&caller)?;
     validate_status(&req.status)?;
     if caller.user.id == user_id && req.status != "active" {
         return Err(ApiError::bad_request("you cannot disable your own account"));
@@ -374,12 +396,24 @@ pub async fn set_merchant_user_status(
     ))
 }
 
+/// Guard: a merchant *administrator* (store-wide, `store_id == None`) is required.
+/// Store-scoped users may only view their own store, not manage users or stores.
+fn require_merchant_admin(caller: &MerchantUser) -> Result<(), ApiError> {
+    if caller.store_id.is_some() {
+        return Err(ApiError::forbidden(
+            "this action requires a merchant administrator (all-stores) account",
+        ));
+    }
+    Ok(())
+}
+
 /// Shared creation path: validate the password, hash it, map a duplicate email to 409.
 async fn create_user_checked(
     state: &AppState,
     req: &CreateUserReq,
     role: &str,
     merchant_id: Option<Uuid>,
+    store_id: Option<Uuid>,
 ) -> Result<UserView, ApiError> {
     let email = req.email.trim();
     if email.is_empty() || !email.contains('@') {
@@ -387,6 +421,18 @@ async fn create_user_checked(
     }
     if req.name.trim().is_empty() {
         return Err(ApiError::bad_request("name is required"));
+    }
+    // A store scope is only valid for a merchant user, and the store must belong
+    // to that merchant.
+    if let Some(sid) = store_id {
+        let store = ops::get_store(&state.pool, sid)
+            .await?
+            .ok_or_else(|| ApiError::bad_request("store not found"))?;
+        if Some(store.merchant_id) != merchant_id {
+            return Err(ApiError::bad_request(
+                "store does not belong to this merchant",
+            ));
+        }
     }
     crate::auth::validate_password(&req.password)?;
     let hash = crate::auth::hash_password(&req.password)?;
@@ -398,6 +444,7 @@ async fn create_user_checked(
         &hash,
         role,
         merchant_id,
+        store_id,
     )
     .await?;
     Ok(user_view(user))
@@ -602,6 +649,7 @@ pub async fn topup(
         &state.pool,
         account,
         Some(merchant.merchant_id),
+        merchant.store_id,
         amount,
         &key,
         now(),
@@ -679,6 +727,7 @@ pub async fn pay(
         &state.pool,
         account,
         merchant.merchant_id,
+        merchant.store_id,
         amount,
         &key,
         note.as_deref(),
@@ -861,6 +910,9 @@ pub async fn refundable(
 #[derive(Deserialize)]
 pub struct TxnQuery {
     pub kind: Option<String>,
+    /// Filter to one store (merchant-admins only; store users are forced to their
+    /// own store regardless of this).
+    pub store_id: Option<Uuid>,
     pub before: Option<String>,
     pub limit: Option<i64>,
 }
@@ -872,6 +924,8 @@ pub struct TxnResp {
     pub account_id: Uuid,
     pub kind: String,
     pub merchant_id: Option<Uuid>,
+    pub store_id: Option<Uuid>,
+    pub store_name: Option<String>,
     pub amount: i64,
     /// Processing fee (payments only; 0 otherwise).
     pub fee: i64,
@@ -890,6 +944,8 @@ pub struct AdminTxnResp {
     pub idi: String,
     pub kind: String,
     pub merchant_id: Option<Uuid>,
+    pub store_id: Option<Uuid>,
+    pub store_name: Option<String>,
     pub amount: i64,
     pub fee: i64,
     pub note: Option<String>,
@@ -906,6 +962,9 @@ pub async fn transactions(
     let filter = ops::TxnFilter {
         account: None,
         merchant_id: Some(merchant.merchant_id),
+        // A store-scoped caller is forced to its own store; a merchant-wide admin
+        // may optionally filter by one store.
+        store_id: merchant.store_id.or(q.store_id),
         kind: q.kind,
         before,
         limit: q.limit.unwrap_or(50),
@@ -920,6 +979,8 @@ pub async fn transactions(
                 id: t.id,
                 kind: t.kind,
                 merchant_id: t.merchant_id,
+                store_id: t.store_id,
+                store_name: t.store_name,
                 amount: t.amount.as_i64(),
                 fee: t.fee.as_i64(),
                 note: t.note,
@@ -938,6 +999,8 @@ fn admin_txn_view(t: ops::TransactionRow) -> AdminTxnResp {
         idi: t.account.idi.to_hex(),
         kind: t.kind,
         merchant_id: t.merchant_id,
+        store_id: t.store_id,
+        store_name: t.store_name,
         amount: t.amount.as_i64(),
         fee: t.fee.as_i64(),
         note: t.note,
@@ -950,6 +1013,7 @@ fn admin_txn_view(t: ops::TransactionRow) -> AdminTxnResp {
 #[derive(Deserialize)]
 pub struct AdminTxnQuery {
     pub merchant_id: Option<Uuid>,
+    pub store_id: Option<Uuid>,
     pub system_code: Option<String>,
     pub idm: Option<String>,
     pub idi: Option<String>,
@@ -976,6 +1040,7 @@ pub async fn admin_transactions(
     let filter = ops::TxnFilter {
         account,
         merchant_id: q.merchant_id,
+        store_id: q.store_id,
         kind: q.kind.filter(|s| !s.is_empty()),
         before,
         limit: q.limit.unwrap_or(50),
@@ -1122,6 +1187,242 @@ pub async fn admin_void(
     let key = idempotency_key(&headers)?;
     let out = ops::void(&state.pool, payment_id, &key, now()).await?;
     Ok(Json(refund_response(out)))
+}
+
+// ----- stores (店舗) -----
+
+#[derive(Serialize)]
+pub struct StoreView {
+    pub id: Uuid,
+    pub merchant_id: Uuid,
+    pub code: String,
+    pub name: String,
+    pub status: String,
+    pub is_default: bool,
+    pub created_at: Timestamp,
+}
+
+fn store_view(s: ops::StoreRow) -> StoreView {
+    StoreView {
+        id: s.id,
+        merchant_id: s.merchant_id,
+        code: s.code,
+        name: s.name,
+        status: s.status,
+        is_default: s.is_default,
+        created_at: s.created_at,
+    }
+}
+
+fn validate_store_status(status: &str) -> Result<(), ApiError> {
+    if matches!(status, "active" | "suspended" | "closed") {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(
+            "status must be active, suspended or closed",
+        ))
+    }
+}
+
+// -- admin: store CRUD under a merchant --
+
+#[derive(Deserialize)]
+pub struct CreateStoreReq {
+    pub code: String,
+    pub name: String,
+}
+
+pub async fn admin_list_stores(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(merchant_id): Path<Uuid>,
+) -> Result<Json<Vec<StoreView>>, ApiError> {
+    let rows = ops::list_stores(&state.pool, merchant_id).await?;
+    Ok(Json(rows.into_iter().map(store_view).collect()))
+}
+
+pub async fn admin_create_store(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(merchant_id): Path<Uuid>,
+    Json(req): Json<CreateStoreReq>,
+) -> Result<(StatusCode, Json<StoreView>), ApiError> {
+    let code = req.code.trim();
+    let name = req.name.trim();
+    if code.is_empty() || name.is_empty() {
+        return Err(ApiError::bad_request("code and name are required"));
+    }
+    let id = ops::create_store(&state.pool, merchant_id, code, name).await?;
+    let store = ops::get_store(&state.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::internal("store vanished after creation"))?;
+    Ok((StatusCode::CREATED, Json(store_view(store))))
+}
+
+#[derive(Deserialize)]
+pub struct StoreStatusReq {
+    pub status: String,
+}
+
+pub async fn admin_set_store_status(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(store_id): Path<Uuid>,
+    Json(req): Json<StoreStatusReq>,
+) -> Result<Json<Value>, ApiError> {
+    validate_store_status(&req.status)?;
+    ops::set_store_status(&state.pool, store_id, &req.status).await?;
+    Ok(Json(
+        serde_json::json!({ "store_id": store_id, "status": req.status }),
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct StoreNameReq {
+    pub name: String,
+}
+
+pub async fn admin_update_store(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(store_id): Path<Uuid>,
+    Json(req): Json<StoreNameReq>,
+) -> Result<Json<Value>, ApiError> {
+    let name = req.name.trim();
+    if name.is_empty() {
+        return Err(ApiError::bad_request("name is required"));
+    }
+    ops::update_store_name(&state.pool, store_id, name).await?;
+    Ok(Json(
+        serde_json::json!({ "store_id": store_id, "name": name }),
+    ))
+}
+
+// -- merchant: list own stores (store users see only their own) --
+
+pub async fn merchant_list_stores(
+    State(state): State<AppState>,
+    caller: MerchantUser,
+) -> Result<Json<Vec<StoreView>>, ApiError> {
+    let mut rows = ops::list_stores(&state.pool, caller.merchant_id).await?;
+    if let Some(scope) = caller.store_id {
+        rows.retain(|s| s.id == scope);
+    }
+    Ok(Json(rows.into_iter().map(store_view).collect()))
+}
+
+// -- merchant: API key management (store-scoped) --
+
+/// Verify `store_id` belongs to the caller's merchant and is within the caller's
+/// store scope (a store user may only touch its own store).
+async fn authorize_store(
+    state: &AppState,
+    caller: &MerchantUser,
+    store_id: Uuid,
+) -> Result<(), ApiError> {
+    let store = ops::get_store(&state.pool, store_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("store not found"))?;
+    // Don't reveal other merchants' stores.
+    if store.merchant_id != caller.merchant_id {
+        return Err(ApiError::not_found("store not found"));
+    }
+    if let Some(scope) = caller.store_id {
+        if scope != store_id {
+            return Err(ApiError::forbidden("outside your store scope"));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+pub struct ApiKeyView {
+    pub id: Uuid,
+    pub store_id: Option<Uuid>,
+    pub label: Option<String>,
+    pub created_at: Timestamp,
+    pub revoked_at: Option<Timestamp>,
+    pub active: bool,
+}
+
+fn api_key_view(k: ops::ApiKeyRow) -> ApiKeyView {
+    ApiKeyView {
+        active: k.revoked_at.is_none(),
+        id: k.id,
+        store_id: k.store_id,
+        label: k.label,
+        created_at: k.created_at,
+        revoked_at: k.revoked_at,
+    }
+}
+
+pub async fn merchant_list_api_keys(
+    State(state): State<AppState>,
+    caller: MerchantUser,
+    Path(store_id): Path<Uuid>,
+) -> Result<Json<Vec<ApiKeyView>>, ApiError> {
+    authorize_store(&state, &caller, store_id).await?;
+    let rows = ops::list_api_keys(&state.pool, caller.merchant_id, Some(store_id)).await?;
+    Ok(Json(rows.into_iter().map(api_key_view).collect()))
+}
+
+#[derive(Deserialize)]
+pub struct CreateApiKeyReq {
+    pub label: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct CreateApiKeyResp {
+    pub id: Uuid,
+    pub store_id: Uuid,
+    /// Shown once — the plaintext API secret. Store it now; only its hash is kept.
+    pub api_key: String,
+}
+
+pub async fn merchant_create_api_key(
+    State(state): State<AppState>,
+    caller: MerchantUser,
+    Path(store_id): Path<Uuid>,
+    Json(req): Json<CreateApiKeyReq>,
+) -> Result<(StatusCode, Json<CreateApiKeyResp>), ApiError> {
+    authorize_store(&state, &caller, store_id).await?;
+    let label = req
+        .label
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let secret = crate::auth::new_secret();
+    let id = ops::store_api_key(
+        &state.pool,
+        caller.merchant_id,
+        store_id,
+        &crate::auth::sha256_hex(&secret),
+        label,
+    )
+    .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateApiKeyResp {
+            id,
+            store_id,
+            api_key: secret,
+        }),
+    ))
+}
+
+pub async fn merchant_revoke_api_key(
+    State(state): State<AppState>,
+    caller: MerchantUser,
+    Path((store_id, key_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<Value>, ApiError> {
+    authorize_store(&state, &caller, store_id).await?;
+    let revoked = ops::revoke_api_key(&state.pool, caller.merchant_id, key_id).await?;
+    if !revoked {
+        return Err(ApiError::not_found("api key not found"));
+    }
+    Ok(Json(
+        serde_json::json!({ "key_id": key_id, "revoked": true }),
+    ))
 }
 
 // ----- merchant management (admin) -----
@@ -1273,10 +1574,15 @@ pub async fn rotate_api_key(
     _admin: AdminUser,
     Path(merchant_id): Path<Uuid>,
 ) -> Result<Json<CreateMerchantResp>, ApiError> {
+    // Admin rotation targets the merchant's default store.
+    let store_id = ops::default_store_id(&state.pool, merchant_id)
+        .await?
+        .ok_or(melon_db::DbError::MerchantNotFound)?;
     let secret = crate::auth::new_secret();
     ops::rotate_api_key(
         &state.pool,
         merchant_id,
+        store_id,
         &crate::auth::sha256_hex(&secret),
         Some("rotated"),
     )
@@ -1321,10 +1627,15 @@ pub async fn create_merchant(
         validate_credit_limit(req.credit_limit.unwrap_or(state.default_credit_limit))?;
     let merchant_id =
         ops::create_merchant(&state.pool, &req.code, &req.name, fee_bps, credit_limit).await?;
+    // The initial API key is issued for the merchant's default store.
+    let store_id = ops::default_store_id(&state.pool, merchant_id)
+        .await?
+        .ok_or_else(|| ApiError::internal("default store missing after merchant creation"))?;
     let secret = crate::auth::new_secret();
     ops::store_api_key(
         &state.pool,
         merchant_id,
+        store_id,
         &crate::auth::sha256_hex(&secret),
         Some("initial"),
     )

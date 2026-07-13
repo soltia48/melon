@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 import { api } from "@/lib/api";
-import type { IssuerAdjustResp, IssuerAdjustment, IssuerBalance } from "@/lib/types";
+import type {
+  IssuerAdjustResp,
+  IssuerAdjustment,
+  IssuerBalance,
+} from "@/lib/types";
 import { fmtTime, yen } from "@/lib/format";
 import { Async, useAsync, errMsg } from "@/components/ui";
 import { useToast } from "@/components/toast";
@@ -50,7 +54,9 @@ export default function IssuerPage() {
           <div className="cards">
             <div className="stat">
               <div className="label">発行者残高(収益)</div>
-              <div className={"value" + (b.balance < 0 ? " neg" : "")}>{yen(b.balance)}</div>
+              <div className={"value" + (b.balance < 0 ? " neg" : "")}>
+                {yen(b.balance)}
+              </div>
             </div>
             <div className="stat">
               <div className="label">決済手数料収入</div>
@@ -62,7 +68,9 @@ export default function IssuerPage() {
             </div>
             <div className="stat">
               <div className="label">引き出し・補正合計</div>
-              <div className={"value" + (b.adjustments < 0 ? " neg" : "")}>{yen(b.adjustments)}</div>
+              <div className={"value" + (b.adjustments < 0 ? " neg" : "")}>
+                {yen(b.adjustments)}
+              </div>
             </div>
           </div>
 
@@ -72,7 +80,9 @@ export default function IssuerPage() {
               発行者残高 = 決済手数料収入 + 消滅済み残高(失効益) +
               引き出し・補正。会計上の収益残高で、現金はチャージを取り扱った加盟店が保持します。
             </p>
-            <h3 style={{ margin: "14px 0 8px" }}>引き出し・補正(監査記録に残ります)</h3>
+            <h3 style={{ margin: "14px 0 8px" }}>
+              引き出し・補正(監査記録に残ります)
+            </h3>
             <div className="row" style={{ marginBottom: 6 }}>
               <div className="field">
                 <label>種別</label>
@@ -83,11 +93,21 @@ export default function IssuerPage() {
               </div>
               <div className="field">
                 <label>金額(円)</label>
-                <input type="number" min={1} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="10000" />
+                <input
+                  type="number"
+                  min={1}
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  placeholder="10000"
+                />
               </div>
               <div className="field" style={{ flex: 1, minWidth: 160 }}>
                 <label>備考</label>
-                <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="理由・振込先など(任意)" />
+                <input
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="理由・振込先など(任意)"
+                />
               </div>
               <button className="primary" onClick={submit}>
                 適用
@@ -118,8 +138,12 @@ export default function IssuerPage() {
                     adjustments.map((a) => (
                       <tr key={a.id}>
                         <td className="muted">{fmtTime(a.created_at)}</td>
-                        <td className="kind">{a.amount < 0 ? "引き出し" : "補正・注入"}</td>
-                        <td className={"num " + (a.amount < 0 ? "neg" : "pos")}>{yen(a.amount)}</td>
+                        <td className="kind">
+                          {a.amount < 0 ? "引き出し" : "補正・注入"}
+                        </td>
+                        <td className={"num " + (a.amount < 0 ? "neg" : "pos")}>
+                          {yen(a.amount)}
+                        </td>
                         <td>{a.note || ""}</td>
                       </tr>
                     ))

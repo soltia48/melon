@@ -36,7 +36,7 @@ fn jst() -> TimeZone {
 async fn top_up_then_balance(pool: PgPool) {
     let a = acct(1);
     let t0 = ts("2026-01-15T09:00:00+09:00");
-    let out = ops::top_up(&pool, a, None, yen(1000), "topup-1", t0, &jst())
+    let out = ops::top_up(&pool, a, None, None, yen(1000), "topup-1", t0, &jst())
         .await
         .unwrap();
     assert_eq!(out.amount, Yen::new(1000));
@@ -57,10 +57,10 @@ async fn same_idi_different_system_codes_are_separate_accounts(pool: PgPool) {
     let a3 = AccountKey::new(0x0003, idm, idi);
     let afe = AccountKey::new(0xFE00, idm, idi);
     let t0 = ts("2026-01-15T09:00:00+09:00");
-    ops::top_up(&pool, a3, None, yen(1000), "k3", t0, &jst())
+    ops::top_up(&pool, a3, None, None, yen(1000), "k3", t0, &jst())
         .await
         .unwrap();
-    ops::top_up(&pool, afe, None, yen(500), "kfe", t0, &jst())
+    ops::top_up(&pool, afe, None, None, yen(500), "kfe", t0, &jst())
         .await
         .unwrap();
 
@@ -85,10 +85,10 @@ async fn merchant_topup_reduces_settlement_and_shows_in_history(pool: PgPool) {
     let t0 = ts("2026-01-15T09:00:00+09:00");
 
     // The merchant sells a ¥1000 top-up, then the customer pays ¥300 there.
-    ops::top_up(&pool, a, Some(m), yen(1000), "t", t0, &jst())
+    ops::top_up(&pool, a, Some(m), None, yen(1000), "t", t0, &jst())
         .await
         .unwrap();
-    ops::pay(&pool, a, m, yen(300), "p", None, t0)
+    ops::pay(&pool, a, m, None, yen(300), "p", None, t0)
         .await
         .unwrap();
 
@@ -120,11 +120,11 @@ async fn payment_fee_reduces_settlement(pool: PgPool) {
         .await
         .unwrap();
     let t0 = ts("2026-01-15T09:00:00+09:00");
-    ops::top_up(&pool, a, None, yen(1000), "t", t0, &jst())
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
         .await
         .unwrap();
 
-    let pay = ops::pay(&pool, a, m, yen(1000), "p", None, t0)
+    let pay = ops::pay(&pool, a, m, None, yen(1000), "p", None, t0)
         .await
         .unwrap();
     // Customer paid the full ¥1000; the merchant is charged a ¥30 fee.
@@ -148,26 +148,26 @@ async fn topup_respects_merchant_credit_limit(pool: PgPool) {
     let t0 = ts("2026-01-15T09:00:00+09:00");
 
     // ¥1000 top-up pushes settlement to exactly −1000 (at the limit) → OK.
-    ops::top_up(&pool, a, Some(m), yen(1000), "t1", t0, &jst())
+    ops::top_up(&pool, a, Some(m), None, yen(1000), "t1", t0, &jst())
         .await
         .unwrap();
     // A further ¥1 would push it to −1001, past the limit → rejected.
-    let err = ops::top_up(&pool, a, Some(m), yen(1), "t2", t0, &jst())
+    let err = ops::top_up(&pool, a, Some(m), None, yen(1), "t2", t0, &jst())
         .await
         .unwrap_err();
     assert!(matches!(err, melon_db::DbError::CreditLimitExceeded { .. }));
 
     // Revolving limit: a payment raises settlement to −500, restoring top-up
     // headroom, so a ¥500 top-up fits again.
-    ops::pay(&pool, a, m, yen(500), "p", None, t0)
+    ops::pay(&pool, a, m, None, yen(500), "p", None, t0)
         .await
         .unwrap();
-    ops::top_up(&pool, a, Some(m), yen(500), "t3", t0, &jst())
+    ops::top_up(&pool, a, Some(m), None, yen(500), "t3", t0, &jst())
         .await
         .unwrap();
 
     // Issuer/system top-ups (no merchant) are never limited.
-    ops::top_up(&pool, a, None, yen(999_999), "sys", t0, &jst())
+    ops::top_up(&pool, a, None, None, yen(999_999), "sys", t0, &jst())
         .await
         .unwrap();
 }
@@ -182,15 +182,15 @@ async fn payment_draws_soonest_expiry_first(pool: PgPool) {
     // Bucket A tops up earlier (expires sooner); bucket B later.
     let early = ts("2026-01-15T09:00:00+09:00"); // expires 2026-07-15
     let late = ts("2026-02-15T09:00:00+09:00"); // expires 2026-08-15
-    let a_bucket = ops::top_up(&pool, a, None, yen(300), "t-a", early, &jst())
+    let a_bucket = ops::top_up(&pool, a, None, None, yen(300), "t-a", early, &jst())
         .await
         .unwrap();
-    let b_bucket = ops::top_up(&pool, a, None, yen(1000), "t-b", late, &jst())
+    let b_bucket = ops::top_up(&pool, a, None, None, yen(1000), "t-b", late, &jst())
         .await
         .unwrap();
 
     let now = ts("2026-03-01T00:00:00+09:00"); // both active
-    let pay = ops::pay(&pool, a, m, yen(500), "pay-1", None, now)
+    let pay = ops::pay(&pool, a, m, None, yen(500), "pay-1", None, now)
         .await
         .unwrap();
 
@@ -210,11 +210,11 @@ async fn payment_rejects_insufficient_funds(pool: PgPool) {
         .await
         .unwrap();
     let t0 = ts("2026-01-15T09:00:00+09:00");
-    ops::top_up(&pool, a, None, yen(400), "t", t0, &jst())
+    ops::top_up(&pool, a, None, None, yen(400), "t", t0, &jst())
         .await
         .unwrap();
 
-    let err = ops::pay(&pool, a, m, yen(500), "pay", None, t0)
+    let err = ops::pay(&pool, a, m, None, yen(500), "pay", None, t0)
         .await
         .unwrap_err();
     match err {
@@ -238,10 +238,10 @@ async fn payment_rejects_insufficient_funds(pool: PgPool) {
 async fn top_up_is_idempotent(pool: PgPool) {
     let a = acct(4);
     let t0 = ts("2026-01-15T09:00:00+09:00");
-    let first = ops::top_up(&pool, a, None, yen(1000), "same-key", t0, &jst())
+    let first = ops::top_up(&pool, a, None, None, yen(1000), "same-key", t0, &jst())
         .await
         .unwrap();
-    let second = ops::top_up(&pool, a, None, yen(1000), "same-key", t0, &jst())
+    let second = ops::top_up(&pool, a, None, None, yen(1000), "same-key", t0, &jst())
         .await
         .unwrap();
 
@@ -262,14 +262,14 @@ async fn payment_is_idempotent(pool: PgPool) {
         .await
         .unwrap();
     let t0 = ts("2026-01-15T09:00:00+09:00");
-    ops::top_up(&pool, a, None, yen(1000), "t", t0, &jst())
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
         .await
         .unwrap();
 
-    let first = ops::pay(&pool, a, m, yen(500), "pay-key", None, t0)
+    let first = ops::pay(&pool, a, m, None, yen(500), "pay-key", None, t0)
         .await
         .unwrap();
-    let second = ops::pay(&pool, a, m, yen(500), "pay-key", None, t0)
+    let second = ops::pay(&pool, a, m, None, yen(500), "pay-key", None, t0)
         .await
         .unwrap();
 
@@ -291,7 +291,7 @@ async fn expired_value_is_not_spendable(pool: PgPool) {
         .await
         .unwrap();
     let t0 = ts("2026-01-15T09:00:00+09:00"); // expires 2026-07-15
-    ops::top_up(&pool, a, None, yen(1000), "t", t0, &jst())
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
         .await
         .unwrap();
 
@@ -307,7 +307,7 @@ async fn expired_value_is_not_spendable(pool: PgPool) {
         ops::balance(&pool, a, after).await.unwrap().total,
         Yen::new(0)
     );
-    let err = ops::pay(&pool, a, m, yen(1), "p", None, after)
+    let err = ops::pay(&pool, a, m, None, yen(1), "p", None, after)
         .await
         .unwrap_err();
     assert!(matches!(err, melon_db::DbError::InsufficientFunds { .. }));
@@ -320,10 +320,10 @@ async fn refund_restores_to_original_bucket(pool: PgPool) {
         .await
         .unwrap();
     let t0 = ts("2026-01-15T09:00:00+09:00");
-    let topup = ops::top_up(&pool, a, None, yen(1000), "t", t0, &jst())
+    let topup = ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
         .await
         .unwrap();
-    let pay = ops::pay(&pool, a, m, yen(600), "p", None, t0)
+    let pay = ops::pay(&pool, a, m, None, yen(600), "p", None, t0)
         .await
         .unwrap();
 
@@ -350,13 +350,14 @@ async fn refund_does_not_extend_validity(pool: PgPool) {
         .await
         .unwrap();
     let t0 = ts("2026-01-15T09:00:00+09:00"); // expires 2026-07-15
-    ops::top_up(&pool, a, None, yen(1000), "t", t0, &jst())
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
         .await
         .unwrap();
     let pay = ops::pay(
         &pool,
         a,
         m,
+        None,
         yen(600),
         "p",
         None,
@@ -389,10 +390,10 @@ async fn over_refund_is_rejected(pool: PgPool) {
         .await
         .unwrap();
     let t0 = ts("2026-01-15T09:00:00+09:00");
-    ops::top_up(&pool, a, None, yen(1000), "t", t0, &jst())
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
         .await
         .unwrap();
-    let pay = ops::pay(&pool, a, m, yen(500), "p", None, t0)
+    let pay = ops::pay(&pool, a, m, None, yen(500), "p", None, t0)
         .await
         .unwrap();
 
@@ -408,7 +409,7 @@ async fn over_refund_is_rejected(pool: PgPool) {
         melon_db::DbError::RefundExceedsPayment { .. }
     ));
     // Refunding more than the payment in one shot is rejected up front.
-    let pay2 = ops::pay(&pool, a, m, yen(300), "p2", None, t0)
+    let pay2 = ops::pay(&pool, a, m, None, yen(300), "p2", None, t0)
         .await
         .unwrap();
     let err2 = ops::refund(&pool, pay2.transaction_id, Some(yen(400)), "r3", t0)
@@ -427,10 +428,10 @@ async fn void_reverses_full_payment(pool: PgPool) {
         .await
         .unwrap();
     let t0 = ts("2026-01-15T09:00:00+09:00");
-    ops::top_up(&pool, a, None, yen(1000), "t", t0, &jst())
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
         .await
         .unwrap();
-    let pay = ops::pay(&pool, a, m, yen(700), "p", None, t0)
+    let pay = ops::pay(&pool, a, m, None, yen(700), "p", None, t0)
         .await
         .unwrap();
 
@@ -450,10 +451,10 @@ async fn refund_is_idempotent(pool: PgPool) {
         .await
         .unwrap();
     let t0 = ts("2026-01-15T09:00:00+09:00");
-    ops::top_up(&pool, a, None, yen(1000), "t", t0, &jst())
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
         .await
         .unwrap();
-    let pay = ops::pay(&pool, a, m, yen(600), "p", None, t0)
+    let pay = ops::pay(&pool, a, m, None, yen(600), "p", None, t0)
         .await
         .unwrap();
 
@@ -476,7 +477,7 @@ async fn refund_is_idempotent(pool: PgPool) {
 async fn sweep_forfeits_expired_and_is_idempotent(pool: PgPool) {
     let a = acct(15);
     let t0 = ts("2026-01-15T09:00:00+09:00"); // expires 2026-07-15
-    ops::top_up(&pool, a, None, yen(1000), "t", t0, &jst())
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
         .await
         .unwrap();
 
@@ -515,6 +516,7 @@ async fn outstanding_balance_report(pool: PgPool) {
         &pool,
         a,
         None,
+        None,
         yen(1000),
         "ta",
         ts("2026-01-15T09:00:00+09:00"),
@@ -525,6 +527,7 @@ async fn outstanding_balance_report(pool: PgPool) {
     ops::top_up(
         &pool,
         b,
+        None,
         None,
         yen(500),
         "tb",
@@ -553,10 +556,10 @@ async fn transaction_history_lists_and_filters(pool: PgPool) {
         .await
         .unwrap();
     let t0 = ts("2026-01-15T09:00:00+09:00");
-    ops::top_up(&pool, a, None, yen(1000), "t", t0, &jst())
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
         .await
         .unwrap();
-    ops::pay(&pool, a, m, yen(300), "p", None, t0)
+    ops::pay(&pool, a, m, None, yen(300), "p", None, t0)
         .await
         .unwrap();
 
@@ -606,7 +609,7 @@ async fn concurrent_payments_never_overspend(pool: PgPool) {
         .await
         .unwrap();
     let t0 = ts("2026-01-15T09:00:00+09:00");
-    ops::top_up(&pool, a, None, yen(1000), "t", t0, &jst())
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
         .await
         .unwrap();
 
@@ -615,7 +618,7 @@ async fn concurrent_payments_never_overspend(pool: PgPool) {
     for i in 0..5 {
         let pool = pool.clone();
         handles.push(tokio::spawn(async move {
-            ops::pay(&pool, a, m, yen(300), &format!("c-{i}"), None, t0).await
+            ops::pay(&pool, a, m, None, yen(300), &format!("c-{i}"), None, t0).await
         }));
     }
     let mut successes = 0;
@@ -647,16 +650,16 @@ async fn issuer_balance_composes_fees_breakage_and_adjustments(pool: PgPool) {
         .await
         .unwrap();
     let t0 = ts("2026-01-15T09:00:00+09:00"); // expires 2026-07-15
-    ops::top_up(&pool, payer, None, yen(1000), "t-pay", t0, &jst())
+    ops::top_up(&pool, payer, None, None, yen(1000), "t-pay", t0, &jst())
         .await
         .unwrap();
-    ops::pay(&pool, payer, m, yen(1000), "p", None, t0)
+    ops::pay(&pool, payer, m, None, yen(1000), "p", None, t0)
         .await
         .unwrap();
 
     // Breakage income: a separate account's ¥500 top-up expires and is swept.
     let breaker = acct(61);
-    ops::top_up(&pool, breaker, None, yen(500), "t-brk", t0, &jst())
+    ops::top_up(&pool, breaker, None, None, yen(500), "t-brk", t0, &jst())
         .await
         .unwrap();
     let after = ts("2026-08-01T00:00:00+09:00");
@@ -716,15 +719,15 @@ async fn refundable_payments_reflect_prior_refunds(pool: PgPool) {
         .await
         .unwrap();
     let t0 = ts("2026-01-15T09:00:00+09:00");
-    ops::top_up(&pool, a, None, yen(2000), "t", t0, &jst())
+    ops::top_up(&pool, a, None, None, yen(2000), "t", t0, &jst())
         .await
         .unwrap();
 
     // Two payments; partially refund the first.
-    let p1 = ops::pay(&pool, a, m, yen(500), "p1", None, t0)
+    let p1 = ops::pay(&pool, a, m, None, yen(500), "p1", None, t0)
         .await
         .unwrap();
-    let p2 = ops::pay(&pool, a, m, yen(300), "p2", None, t0)
+    let p2 = ops::pay(&pool, a, m, None, yen(300), "p2", None, t0)
         .await
         .unwrap();
     ops::refund(&pool, p1.transaction_id, Some(yen(200)), "r1", t0)
@@ -778,14 +781,14 @@ async fn refund_is_allowed_even_below_credit_limit(pool: PgPool) {
     let t0 = ts("2026-01-15T09:00:00+09:00");
 
     // A tops up ¥500 and spends it at M → settlement 0, restoring top-up headroom.
-    ops::top_up(&pool, a, Some(m), yen(500), "a-top", t0, &jst())
+    ops::top_up(&pool, a, Some(m), None, yen(500), "a-top", t0, &jst())
         .await
         .unwrap();
-    let pay = ops::pay(&pool, a, m, yen(500), "a-pay", None, t0)
+    let pay = ops::pay(&pool, a, m, None, yen(500), "a-pay", None, t0)
         .await
         .unwrap();
     // The recovered headroom lets M sell another ¥1000 top-up (settlement −1000).
-    ops::top_up(&pool, b, Some(m), yen(1000), "b-top", t0, &jst())
+    ops::top_up(&pool, b, Some(m), None, yen(1000), "b-top", t0, &jst())
         .await
         .unwrap();
 

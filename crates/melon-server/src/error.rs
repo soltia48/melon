@@ -108,6 +108,12 @@ impl From<DbError> for ApiError {
                 "idempotency key reused with different parameters",
             ),
             DbError::MerchantNotFound => ApiError::not_found("merchant not found"),
+            DbError::StoreNotFound => ApiError::not_found("store not found"),
+            DbError::StoreCodeTaken => ApiError::new(
+                StatusCode::CONFLICT,
+                "STORE_CODE_TAKEN",
+                "that store code is already in use for this merchant",
+            ),
             DbError::UserNotFound => ApiError::not_found("user not found"),
             DbError::EmailTaken => ApiError::new(
                 StatusCode::CONFLICT,

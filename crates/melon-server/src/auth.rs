@@ -108,6 +108,9 @@ pub struct AdminUser(pub User);
 pub struct MerchantUser {
     pub user: User,
     pub merchant_id: Uuid,
+    /// The user's store scope: `None` = merchant-wide admin (all stores);
+    /// `Some` = restricted to that store.
+    pub store_id: Option<Uuid>,
 }
 
 /// A merchant caller — either the **terminal** (API key) or a signed-in
@@ -115,6 +118,10 @@ pub struct MerchantUser {
 #[derive(Debug, Clone, Copy)]
 pub struct AuthedMerchant {
     pub merchant_id: Uuid,
+    /// The caller's store scope: the terminal's store (API key), or the staff
+    /// user's store (`None` for a merchant-wide admin). Payments/top-ups are
+    /// attributed to it; listings are filtered by it when set.
+    pub store_id: Option<Uuid>,
 }
 
 impl FromRequestParts<AppState> for AuthUser {
@@ -151,8 +158,13 @@ impl FromRequestParts<AppState> for MerchantUser {
             ("merchant", Some(id)) => id,
             _ => return Err(ApiError::forbidden("a merchant account is required")),
         };
+        let store_id = user.store_id;
         ensure_merchant_active(state, merchant_id).await?;
-        Ok(MerchantUser { user, merchant_id })
+        Ok(MerchantUser {
+            user,
+            merchant_id,
+            store_id,
+        })
     }
 }
 
@@ -170,12 +182,19 @@ impl FromRequestParts<AppState> for AuthedMerchant {
             }
             return Ok(AuthedMerchant {
                 merchant_id: merchant.merchant_id,
+                store_id: merchant.store_id,
             });
         }
         // Otherwise a signed-in merchant staff user (the portal).
-        let MerchantUser { merchant_id, .. } =
-            MerchantUser::from_request_parts(parts, state).await?;
-        Ok(AuthedMerchant { merchant_id })
+        let MerchantUser {
+            merchant_id,
+            store_id,
+            ..
+        } = MerchantUser::from_request_parts(parts, state).await?;
+        Ok(AuthedMerchant {
+            merchant_id,
+            store_id,
+        })
     }
 }
 

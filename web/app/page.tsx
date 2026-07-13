@@ -322,7 +322,7 @@ export default function Home() {
           </div>
           <div className="legal">
             <span>
-              Melon は前払式支払手段(第三者型)の発行・管理基盤です。資金決済法に基づく表示等は発行者が別途行います。
+              Melon は前払式支払手段(第三者型)の発行・管理基盤です。
             </span>
             <span>© 2026 KIRISHIKI Yudai</span>
           </div>

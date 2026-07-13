@@ -29,7 +29,8 @@ export default function AdminUsersPage() {
   const [merchantId, setMerchantId] = useState("");
 
   const create = async (merchants: Merchant[]) => {
-    if (!name.trim() || !email.trim() || !password) return toast("名前・メール・パスワードを入力してください");
+    if (!name.trim() || !email.trim() || !password)
+      return toast("名前・メール・パスワードを入力してください");
     const mid = role === "merchant" ? merchantId || merchants[0]?.id : null;
     if (role === "merchant" && !mid) return toast("加盟店を選択してください");
     try {
@@ -52,8 +53,14 @@ export default function AdminUsersPage() {
 
   const setStatus = async (id: string, status: string) => {
     try {
-      await api.post(`/v1/admin/users/${encodeURIComponent(id)}/status`, { status });
-      toast(status === "active" ? "有効化しました" : "無効化しました(セッションも失効)");
+      await api.post(`/v1/admin/users/${encodeURIComponent(id)}/status`, {
+        status,
+      });
+      toast(
+        status === "active"
+          ? "有効化しました"
+          : "無効化しました(セッションも失効)",
+      );
       state.reload();
     } catch (e) {
       toast(errMsg(e));
@@ -63,7 +70,9 @@ export default function AdminUsersPage() {
     const pw = prompt(`${mail} の新しいパスワード(10 文字以上)`);
     if (pw === null) return;
     try {
-      await api.post(`/v1/admin/users/${encodeURIComponent(id)}/password`, { new_password: pw });
+      await api.post(`/v1/admin/users/${encodeURIComponent(id)}/password`, {
+        new_password: pw,
+      });
       toast("パスワードを再設定しました(既存セッションは失効)");
     } catch (e) {
       toast(errMsg(e));
@@ -73,30 +82,51 @@ export default function AdminUsersPage() {
   return (
     <Async state={state}>
       {({ users, merchants }) => {
-        const codeOf = (id: string | null) => merchants.find((m) => m.id === id)?.code || "—";
+        const codeOf = (id: string | null) =>
+          merchants.find((m) => m.id === id)?.code || "—";
         return (
           <>
             <div className="panel">
               <h2>ユーザーを追加</h2>
               <p className="muted">
-                発行者(管理画面)ユーザー、または任意の加盟店のユーザーを作成します。パスワードは 10 文字以上。
+                発行者(管理画面)ユーザー、または任意の加盟店のユーザーを作成します。パスワードは
+                10 文字以上。
               </p>
               <div className="row">
                 <div className="field">
                   <label>名前</label>
-                  <input value={name} onChange={(e) => setName(e.target.value)} placeholder="山田 太郎" />
+                  <input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="山田 太郎"
+                  />
                 </div>
                 <div className="field">
                   <label>メールアドレス</label>
-                  <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="user@example.com" />
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="user@example.com"
+                  />
                 </div>
                 <div className="field">
                   <label>パスワード</label>
-                  <input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
                 </div>
                 <div className="field">
                   <label>種別</label>
-                  <select value={role} onChange={(e) => setRole(e.target.value as "merchant" | "admin")}>
+                  <select
+                    value={role}
+                    onChange={(e) =>
+                      setRole(e.target.value as "merchant" | "admin")
+                    }
+                  >
                     <option value="merchant">加盟店ユーザー</option>
                     <option value="admin">発行者(管理者)</option>
                   </select>
@@ -104,7 +134,10 @@ export default function AdminUsersPage() {
                 {role === "merchant" && (
                   <div className="field">
                     <label>加盟店</label>
-                    <select value={merchantId} onChange={(e) => setMerchantId(e.target.value)}>
+                    <select
+                      value={merchantId}
+                      onChange={(e) => setMerchantId(e.target.value)}
+                    >
                       {merchants.map((m) => (
                         <option key={m.id} value={m.id}>
                           {m.code} — {m.name}
@@ -147,19 +180,41 @@ export default function AdminUsersPage() {
                           <td>{u.name}</td>
                           <td className="mono">{u.email}</td>
                           <td>
-                            <span className="kind">{u.role === "admin" ? "発行者" : "加盟店"}</span>
+                            <span className="kind">
+                              {u.role === "admin" ? "発行者" : "加盟店"}
+                            </span>
                           </td>
-                          <td className="mono muted">{u.role === "merchant" ? codeOf(u.merchant_id) : "—"}</td>
-                          <td>{u.status === "active" ? "有効" : <span className="neg">無効</span>}</td>
+                          <td className="mono muted">
+                            {u.role === "merchant"
+                              ? codeOf(u.merchant_id)
+                              : "—"}
+                          </td>
+                          <td>
+                            {u.status === "active" ? (
+                              "有効"
+                            ) : (
+                              <span className="neg">無効</span>
+                            )}
+                          </td>
                           <td className="muted">{fmtTime(u.created_at)}</td>
-                          <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                          <td
+                            style={{ textAlign: "right", whiteSpace: "nowrap" }}
+                          >
                             <button
                               className="sm"
-                              onClick={() => setStatus(u.id, u.status === "active" ? "disabled" : "active")}
+                              onClick={() =>
+                                setStatus(
+                                  u.id,
+                                  u.status === "active" ? "disabled" : "active",
+                                )
+                              }
                             >
                               {u.status === "active" ? "無効化" : "有効化"}
                             </button>
-                            <button className="sm" onClick={() => resetPassword(u.id, u.email)}>
+                            <button
+                              className="sm"
+                              onClick={() => resetPassword(u.id, u.email)}
+                            >
                               パスワード再設定
                             </button>
                           </td>

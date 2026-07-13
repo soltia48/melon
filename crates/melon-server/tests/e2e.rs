@@ -89,7 +89,7 @@ fn build_app(pool: PgPool) -> Router {
 /// credential marker `send` turns into a session cookie.
 async fn sign_in_admin(app: &Router, pool: &PgPool) -> String {
     let hash = melon_server::auth::hash_password(ADMIN_PASSWORD).unwrap();
-    melon_db::users::create_user(pool, ADMIN_EMAIL, "Admin", &hash, "admin", None)
+    melon_db::users::create_user(pool, ADMIN_EMAIL, "Admin", &hash, "admin", None, None)
         .await
         .unwrap();
     sign_in(app, ADMIN_EMAIL, ADMIN_PASSWORD).await

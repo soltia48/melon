@@ -24,4 +24,5 @@ export const shortId = (id: string | null | undefined): string => {
   return s.length > 13 ? s.slice(0, 8) + "…" + s.slice(-4) : s;
 };
 
-export const pct = (bps: number): string => (Number(bps) / 100).toFixed(2) + "%";
+export const pct = (bps: number): string =>
+  (Number(bps) / 100).toFixed(2) + "%";

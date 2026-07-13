@@ -8,6 +8,7 @@ import type {
   Merchant,
   MerchantAdjustResp,
   RotateKeyResp,
+  Store,
 } from "@/lib/types";
 import { fmtTime, pct, yen } from "@/lib/format";
 import { Async, Modal, useAsync, errMsg } from "@/components/ui";
@@ -23,7 +24,9 @@ interface KeyReveal {
 
 export default function MerchantsPage() {
   const toast = useToast();
-  const state = useAsync<Merchant[]>(() => api.get<Merchant[]>("/v1/merchants"));
+  const state = useAsync<Merchant[]>(() =>
+    api.get<Merchant[]>("/v1/merchants"),
+  );
   const [selected, setSelected] = useState<string | null>(null);
   const [keyReveal, setKeyReveal] = useState<KeyReveal | null>(null);
 
@@ -32,7 +35,11 @@ export default function MerchantsPage() {
       <CreateMerchant
         onCreated={async (r, code) => {
           await state.reload();
-          setKeyReveal({ title: "API キー(新規加盟店)", secret: r.api_key, merchantId: r.merchant_id });
+          setKeyReveal({
+            title: "API キー(新規加盟店)",
+            secret: r.api_key,
+            merchantId: r.merchant_id,
+          });
           toast(`加盟店 ${code} を作成しました`);
         }}
       />
@@ -77,15 +84,22 @@ export default function MerchantsPage() {
                           <td className="mono">{m.code}</td>
                           <td>{m.name}</td>
                           <td className="num">{pct(m.fee_bps)}</td>
-                          <td className={"num" + (m.collected < 0 ? " neg" : "")}>{yen(m.collected)}</td>
+                          <td
+                            className={"num" + (m.collected < 0 ? " neg" : "")}
+                          >
+                            {yen(m.collected)}
+                          </td>
                           <td onClick={(e) => e.stopPropagation()}>
                             <select
                               value={m.status}
                               onChange={async (e) => {
                                 try {
-                                  await api.post(`/v1/admin/merchants/${m.id}/status`, {
-                                    status: e.target.value,
-                                  });
+                                  await api.post(
+                                    `/v1/admin/merchants/${m.id}/status`,
+                                    {
+                                      status: e.target.value,
+                                    },
+                                  );
                                   toast("状態を更新しました");
                                   state.reload();
                                 } catch (err) {
@@ -124,7 +138,9 @@ export default function MerchantsPage() {
         )}
       </Async>
 
-      {keyReveal && <KeyModal reveal={keyReveal} onClose={() => setKeyReveal(null)} />}
+      {keyReveal && (
+        <KeyModal reveal={keyReveal} onClose={() => setKeyReveal(null)} />
+      )}
     </>
   );
 }
@@ -142,7 +158,8 @@ function CreateMerchant({
   const [busy, setBusy] = useState(false);
 
   const create = async () => {
-    if (!code.trim() || !name.trim()) return toast("コードと名称を入力してください");
+    if (!code.trim() || !name.trim())
+      return toast("コードと名称を入力してください");
     setBusy(true);
     try {
       const r = await api.post<CreateMerchantResp>("/v1/merchants", {
@@ -169,11 +186,19 @@ function CreateMerchant({
       <div className="row">
         <div className="field">
           <label>コード</label>
-          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="shop-1" />
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="shop-1"
+          />
         </div>
         <div className="field">
           <label>名称</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="テスト店舗" />
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="テスト店舗"
+          />
         </div>
         <div className="field">
           <label>手数料(bps)</label>
@@ -217,7 +242,10 @@ function MerchantDetail({
 }) {
   const toast = useToast();
   const state = useAsync<AdminTxn[]>(
-    () => api.get<AdminTxn[]>("/v1/admin/transactions" + qs({ limit: 20, merchant_id: merchantId })),
+    () =>
+      api.get<AdminTxn[]>(
+        "/v1/admin/transactions" + qs({ limit: 20, merchant_id: merchantId }),
+      ),
     [merchantId],
   );
 
@@ -234,7 +262,8 @@ function MerchantDetail({
 
   const setFeeBps = async () => {
     const fee_bps = parseInt(fee, 10);
-    if (!(fee_bps >= 0 && fee_bps <= 10000)) return toast("0〜10000 bps の範囲で入力してください");
+    if (!(fee_bps >= 0 && fee_bps <= 10000))
+      return toast("0〜10000 bps の範囲で入力してください");
     try {
       await api.post(`/v1/admin/merchants/${merchantId}/fee`, { fee_bps });
       toast("手数料率を更新しました");
@@ -247,7 +276,9 @@ function MerchantDetail({
     const credit_limit = parseInt(credit, 10);
     if (!(credit_limit >= 0)) return toast("0 以上で入力してください");
     try {
-      await api.post(`/v1/admin/merchants/${merchantId}/credit-limit`, { credit_limit });
+      await api.post(`/v1/admin/merchants/${merchantId}/credit-limit`, {
+        credit_limit,
+      });
       toast("与信限度を更新しました");
       refresh();
     } catch (e) {
@@ -255,10 +286,21 @@ function MerchantDetail({
     }
   };
   const rotate = async () => {
-    if (!confirm("この加盟店の既存 API キーをすべて失効し、新しいキーを発行します。よろしいですか?")) return;
+    if (
+      !confirm(
+        "この加盟店の既存 API キーをすべて失効し、新しいキーを発行します。よろしいですか?",
+      )
+    )
+      return;
     try {
-      const r = await api.post<RotateKeyResp>(`/v1/admin/merchants/${merchantId}/api-keys`);
-      onRevealKey({ title: "API キー(再発行)", secret: r.api_key, merchantId: r.merchant_id || merchantId });
+      const r = await api.post<RotateKeyResp>(
+        `/v1/admin/merchants/${merchantId}/api-keys`,
+      );
+      onRevealKey({
+        title: "API キー(再発行)",
+        secret: r.api_key,
+        merchantId: r.merchant_id || merchantId,
+      });
     } catch (e) {
       toast(errMsg(e));
     }
@@ -267,10 +309,13 @@ function MerchantDetail({
     const amount = parseInt(adjAmount, 10);
     if (!amount || amount <= 0) return toast("金額を入力してください");
     try {
-      const r = await api.post<MerchantAdjustResp>(`/v1/admin/merchants/${merchantId}/adjust`, {
-        delta: parseInt(adjSign, 10) * amount,
-        reason: adjReason.trim() || null,
-      });
+      const r = await api.post<MerchantAdjustResp>(
+        `/v1/admin/merchants/${merchantId}/adjust`,
+        {
+          delta: parseInt(adjSign, 10) * amount,
+          reason: adjReason.trim() || null,
+        },
+      );
       toast(`調整完了: 精算残高 ${yen(r.balance)}`);
       setAdjAmount("");
       setAdjReason("");
@@ -285,13 +330,18 @@ function MerchantDetail({
   return (
     <div className="panel">
       <h2>
-        加盟店詳細 <span className="mono" style={{ fontWeight: 400 }}>{m?.code}</span>
+        加盟店詳細{" "}
+        <span className="mono" style={{ fontWeight: 400 }}>
+          {m?.code}
+        </span>
       </h2>
       {m && (
         <div className="cards" style={{ marginBottom: 16 }}>
           <div className="stat">
             <div className="label">精算残高</div>
-            <div className={"value" + (m.collected < 0 ? " neg" : "")}>{yen(m.collected)}</div>
+            <div className={"value" + (m.collected < 0 ? " neg" : "")}>
+              {yen(m.collected)}
+            </div>
           </div>
           <div className="stat">
             <div className="label">決済手数料率</div>
@@ -303,7 +353,11 @@ function MerchantDetail({
           </div>
           <div className="stat">
             <div className="label">チャージ余力</div>
-            <div className={"value" + (m.collected + m.credit_limit < 0 ? " neg" : "")}>
+            <div
+              className={
+                "value" + (m.collected + m.credit_limit < 0 ? " neg" : "")
+              }
+            >
               {yen(m.collected + m.credit_limit)}
             </div>
           </div>
@@ -338,11 +392,13 @@ function MerchantDetail({
         <button onClick={setCreditLimit}>与信限度を更新</button>
       </div>
       <div style={{ marginBottom: 18 }}>
-        <button onClick={rotate}>API キー再発行</button>
+        <button onClick={rotate}>API キー再発行(既定店舗)</button>
         <span className="muted" style={{ marginLeft: 8 }}>
-          既存キーを失効し、新しいキーを発行します
+          既定店舗の既存キーを失効し、新しいキーを発行します(店舗ごとの発行は加盟店ポータルから)
         </span>
       </div>
+
+      <StoresAdmin merchantId={merchantId} />
 
       <h3 style={{ marginBottom: 8 }}>精算残高の調整(監査記録に残ります)</h3>
       <div className="row" style={{ marginBottom: 6 }}>
@@ -365,14 +421,19 @@ function MerchantDetail({
         </div>
         <div className="field" style={{ flex: 1, minWidth: 160 }}>
           <label>理由</label>
-          <input value={adjReason} onChange={(e) => setAdjReason(e.target.value)} placeholder="調整理由(任意)" />
+          <input
+            value={adjReason}
+            onChange={(e) => setAdjReason(e.target.value)}
+            placeholder="調整理由(任意)"
+          />
         </div>
         <button className="primary" onClick={adjust}>
           適用
         </button>
       </div>
       <p className="muted" style={{ margin: "0 0 18px" }}>
-        精算残高 = 受領した支払 − チャージ取扱 − 返金・取消 + 調整(発行者が加盟店に支払う額)。
+        精算残高 = 受領した支払 − チャージ取扱 − 返金・取消 +
+        調整(発行者が加盟店に支払う額)。
       </p>
 
       <h3 style={{ marginBottom: 8 }}>最近の取引</h3>
@@ -398,7 +459,11 @@ function MerchantDetail({
                 ) : (
                   txns.map((t) => {
                     const sign =
-                      t.kind === "payment" ? "pos" : t.kind === "refund" || t.kind === "reversal" ? "neg" : "";
+                      t.kind === "payment"
+                        ? "pos"
+                        : t.kind === "refund" || t.kind === "reversal"
+                          ? "neg"
+                          : "";
                     return (
                       <tr key={t.id}>
                         <td className="muted">{fmtTime(t.occurred_at)}</td>
@@ -418,12 +483,19 @@ function MerchantDetail({
   );
 }
 
-function KeyModal({ reveal, onClose }: { reveal: KeyReveal; onClose: () => void }) {
+function KeyModal({
+  reveal,
+  onClose,
+}: {
+  reveal: KeyReveal;
+  onClose: () => void;
+}) {
   const toast = useToast();
   return (
     <Modal title={reveal.title} onClose={onClose}>
       <p className="muted">
-        この API キーは<strong>今だけ</strong>表示されます。安全な場所に保存してください(サーバはハッシュのみ保持します)。
+        この API キーは<strong>今だけ</strong>
+        表示されます。安全な場所に保存してください(サーバはハッシュのみ保持します)。
       </p>
       <div className="k">
         <input
@@ -451,5 +523,126 @@ function KeyModal({ reveal, onClose }: { reveal: KeyReveal; onClose: () => void 
         </button>
       </div>
     </Modal>
+  );
+}
+
+function StoresAdmin({ merchantId }: { merchantId: string }) {
+  const toast = useToast();
+  const state = useAsync<Store[]>(
+    () => api.get<Store[]>(`/v1/admin/merchants/${merchantId}/stores`),
+    [merchantId],
+  );
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+
+  const create = async () => {
+    if (!code.trim() || !name.trim())
+      return toast("コードと名称を入力してください");
+    try {
+      await api.post(`/v1/admin/merchants/${merchantId}/stores`, {
+        code: code.trim(),
+        name: name.trim(),
+      });
+      toast("店舗を作成しました");
+      setCode("");
+      setName("");
+      state.reload();
+    } catch (e) {
+      toast(errMsg(e));
+    }
+  };
+  const setStatus = async (storeId: string, status: string) => {
+    try {
+      await api.post(`/v1/admin/stores/${storeId}/status`, { status });
+      state.reload();
+    } catch (e) {
+      toast(errMsg(e));
+    }
+  };
+  const rename = async (storeId: string, current: string) => {
+    const next = prompt("新しい店舗名", current);
+    if (next === null || !next.trim()) return;
+    try {
+      await api.patch(`/v1/admin/stores/${storeId}`, { name: next.trim() });
+      toast("店舗名を更新しました");
+      state.reload();
+    } catch (e) {
+      toast(errMsg(e));
+    }
+  };
+
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <h3 style={{ marginBottom: 8 }}>店舗</h3>
+      <div className="row" style={{ marginBottom: 6 }}>
+        <div className="field">
+          <label>コード</label>
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="shibuya"
+            style={{ width: 140 }}
+          />
+        </div>
+        <div className="field">
+          <label>名称</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="渋谷店"
+          />
+        </div>
+        <button className="primary" onClick={create}>
+          店舗を追加
+        </button>
+      </div>
+      <Async state={state}>
+        {(stores) => (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>コード</th>
+                  <th>状態</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {stores.map((s) => (
+                  <tr key={s.id}>
+                    <td>
+                      {s.name}
+                      {s.is_default && <span className="muted"> (既定)</span>}
+                    </td>
+                    <td className="mono">{s.code}</td>
+                    <td>
+                      <select
+                        value={s.status}
+                        onChange={(e) => setStatus(s.id, e.target.value)}
+                      >
+                        {STATUSES.map((st) => (
+                          <option key={st} value={st}>
+                            {st}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      <button
+                        className="sm"
+                        onClick={() => rename(s.id, s.name)}
+                      >
+                        名称変更
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Async>
+    </div>
   );
 }

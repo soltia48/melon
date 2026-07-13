@@ -22,7 +22,13 @@ export default function AdminTransactionsPage() {
   const [idm, setIdm] = useState("");
   const [idi, setIdi] = useState("");
   const [limit, setLimit] = useState("50");
-  const [query, setQuery] = useState<Query>({ kind: "", sc: "", idm: "", idi: "", limit: "50" });
+  const [query, setQuery] = useState<Query>({
+    kind: "",
+    sc: "",
+    idm: "",
+    idi: "",
+    limit: "50",
+  });
 
   const state = useAsync<AdminTxn[]>(
     () =>
@@ -39,7 +45,8 @@ export default function AdminTransactionsPage() {
     [query],
   );
 
-  const search = () => setQuery({ kind, sc: sc.trim(), idm: idm.trim(), idi: idi.trim(), limit });
+  const search = () =>
+    setQuery({ kind, sc: sc.trim(), idm: idm.trim(), idi: idi.trim(), limit });
 
   return (
     <>
@@ -58,26 +65,50 @@ export default function AdminTransactionsPage() {
           </div>
           <div className="field">
             <label>System Code</label>
-            <input className="mono" placeholder="任意 (例 0x0003)" style={{ width: 130 }} value={sc} onChange={(e) => setSc(e.target.value)} />
+            <input
+              className="mono"
+              placeholder="任意 (例 0x0003)"
+              style={{ width: 130 }}
+              value={sc}
+              onChange={(e) => setSc(e.target.value)}
+            />
           </div>
           <div className="field">
             <label>IDm(16桁hex)</label>
-            <input className="mono" placeholder="任意" value={idm} onChange={(e) => setIdm(e.target.value)} />
+            <input
+              className="mono"
+              placeholder="任意"
+              value={idm}
+              onChange={(e) => setIdm(e.target.value)}
+            />
           </div>
           <div className="field">
             <label>IDi(16桁hex)</label>
-            <input className="mono" placeholder="任意" value={idi} onChange={(e) => setIdi(e.target.value)} />
+            <input
+              className="mono"
+              placeholder="任意"
+              value={idi}
+              onChange={(e) => setIdi(e.target.value)}
+            />
           </div>
           <div className="field">
             <label>件数</label>
-            <input type="number" min={1} max={500} value={limit} onChange={(e) => setLimit(e.target.value)} style={{ width: 90 }} />
+            <input
+              type="number"
+              min={1}
+              max={500}
+              value={limit}
+              onChange={(e) => setLimit(e.target.value)}
+              style={{ width: 90 }}
+            />
           </div>
           <button className="primary" onClick={search}>
             検索
           </button>
         </div>
         <p className="muted" style={{ margin: "8px 0 0" }}>
-          口座で絞り込む場合は System Code・IDm・IDi をすべて指定してください(三つ組で一意)。
+          口座で絞り込む場合は System Code・IDm・IDi
+          をすべて指定してください(三つ組で一意)。
         </p>
       </div>
 
@@ -98,12 +129,16 @@ export default function AdminTransactionsPage() {
                       <th>IDi</th>
                       <th className="num">金額</th>
                       <th>加盟店</th>
+                      <th>店舗</th>
                       <th>メモ</th>
                     </tr>
                   </thead>
                   <tbody>
                     {list.map((t) => {
-                      const sign = t.kind === "payment" || t.kind === "expiry" ? "neg" : "pos";
+                      const sign =
+                        t.kind === "payment" || t.kind === "expiry"
+                          ? "neg"
+                          : "pos";
                       return (
                         <tr key={t.id}>
                           <td className="muted">{fmtTime(t.occurred_at)}</td>
@@ -112,7 +147,12 @@ export default function AdminTransactionsPage() {
                           <td className="mono">{t.idm}</td>
                           <td className="mono">{t.idi}</td>
                           <td className={"num " + sign}>{yen(t.amount)}</td>
-                          <td className="mono muted">{t.merchant_id ? t.merchant_id.slice(0, 8) + "…" : "—"}</td>
+                          <td className="mono muted">
+                            {t.merchant_id
+                              ? t.merchant_id.slice(0, 8) + "…"
+                              : "—"}
+                          </td>
+                          <td className="muted">{t.store_name || "—"}</td>
                           <td className="muted">
                             <span
                               title={t.note ?? undefined}

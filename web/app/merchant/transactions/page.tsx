@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { api, qs } from "@/lib/api";
-import type { MerchantTxn } from "@/lib/types";
+import type { MerchantTxn, Store } from "@/lib/types";
 import { fmtTime, shortId, yen } from "@/lib/format";
 import { Async, useAsync, errMsg } from "@/components/ui";
 import { useToast } from "@/components/toast";
@@ -12,11 +12,21 @@ const KINDS = ["", "payment", "top_up", "refund", "reversal"];
 export default function MerchantTransactionsPage() {
   const toast = useToast();
   const [kind, setKind] = useState("");
+  const [store, setStore] = useState("");
   const [limit, setLimit] = useState("100");
-  const [query, setQuery] = useState({ kind: "", limit: "100" });
+  const [query, setQuery] = useState({ kind: "", store: "", limit: "100" });
+  const stores = useAsync<Store[]>(() => api.get<Store[]>("/v1/stores"));
 
   const state = useAsync<MerchantTxn[]>(
-    () => api.get<MerchantTxn[]>("/v1/transactions" + qs({ limit: query.limit || 100, kind: query.kind })),
+    () =>
+      api.get<MerchantTxn[]>(
+        "/v1/transactions" +
+          qs({
+            limit: query.limit || 100,
+            kind: query.kind,
+            store_id: query.store,
+          }),
+      ),
     [query],
   );
 
@@ -30,7 +40,10 @@ export default function MerchantTransactionsPage() {
       if (!(amount > 0)) return toast("正の金額を入力してください");
     }
     try {
-      const r = await api.post<{ amount: number }>("/v1/refunds", { payment_id: paymentId, amount });
+      const r = await api.post<{ amount: number }>("/v1/refunds", {
+        payment_id: paymentId,
+        amount,
+      });
       toast(`返金しました: ${yen(r.amount)}`);
       state.reload();
     } catch (e) {
@@ -40,7 +53,9 @@ export default function MerchantTransactionsPage() {
   const voidPayment = async (paymentId: string) => {
     if (!confirm("この支払いを取り消します(全額)。よろしいですか?")) return;
     try {
-      const r = await api.post<{ amount: number }>(`/v1/payments/${encodeURIComponent(paymentId)}/void`);
+      const r = await api.post<{ amount: number }>(
+        `/v1/payments/${encodeURIComponent(paymentId)}/void`,
+      );
       toast(`取り消しました: ${yen(r.amount)}`);
       state.reload();
     } catch (e) {
@@ -64,10 +79,31 @@ export default function MerchantTransactionsPage() {
             </select>
           </div>
           <div className="field">
-            <label>件数</label>
-            <input type="number" min={1} max={500} value={limit} onChange={(e) => setLimit(e.target.value)} style={{ width: 90 }} />
+            <label>店舗</label>
+            <select value={store} onChange={(e) => setStore(e.target.value)}>
+              <option value="">すべて</option>
+              {(stores.data ?? []).map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
           </div>
-          <button className="primary" onClick={() => setQuery({ kind, limit })}>
+          <div className="field">
+            <label>件数</label>
+            <input
+              type="number"
+              min={1}
+              max={500}
+              value={limit}
+              onChange={(e) => setLimit(e.target.value)}
+              style={{ width: 90 }}
+            />
+          </div>
+          <button
+            className="primary"
+            onClick={() => setQuery({ kind, store, limit })}
+          >
             更新
           </button>
         </div>
@@ -85,6 +121,7 @@ export default function MerchantTransactionsPage() {
                     <tr>
                       <th>日時</th>
                       <th>種別</th>
+                      <th>店舗</th>
                       <th>利用者 ID(仮名)</th>
                       <th className="num">金額</th>
                       <th className="num">手数料</th>
@@ -97,19 +134,27 @@ export default function MerchantTransactionsPage() {
                       const sign =
                         t.kind === "payment"
                           ? "pos"
-                          : t.kind === "top_up" || t.kind === "refund" || t.kind === "reversal"
+                          : t.kind === "top_up" ||
+                              t.kind === "refund" ||
+                              t.kind === "reversal"
                             ? "neg"
                             : "";
-                      const disp = t.kind === "payment" ? yen(t.amount) : "−" + yen(t.amount).slice(1);
+                      const disp =
+                        t.kind === "payment"
+                          ? yen(t.amount)
+                          : "−" + yen(t.amount).slice(1);
                       return (
                         <tr key={t.id}>
                           <td className="muted">{fmtTime(t.occurred_at)}</td>
                           <td>{t.kind}</td>
+                          <td className="muted">{t.store_name || "—"}</td>
                           <td className="mono" title={t.account_id}>
                             {shortId(t.account_id)}
                           </td>
                           <td className={"num " + sign}>{disp}</td>
-                          <td className="num muted">{t.fee ? yen(t.fee) : "—"}</td>
+                          <td className="num muted">
+                            {t.fee ? yen(t.fee) : "—"}
+                          </td>
                           <td className="muted">
                             <span
                               title={t.note ?? undefined}
@@ -128,10 +173,16 @@ export default function MerchantTransactionsPage() {
                           <td>
                             {t.kind === "payment" ? (
                               <>
-                                <button className="sm" onClick={() => refund(t.id)}>
+                                <button
+                                  className="sm"
+                                  onClick={() => refund(t.id)}
+                                >
                                   返金
                                 </button>
-                                <button className="sm" onClick={() => voidPayment(t.id)}>
+                                <button
+                                  className="sm"
+                                  onClick={() => voidPayment(t.id)}
+                                >
                                   取消
                                 </button>
                               </>

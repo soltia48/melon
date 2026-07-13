@@ -7,7 +7,11 @@ export const metadata: Metadata = {
   description: "Melon — オンライン前払式支払手段プラットフォーム",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="ja">
       <body>

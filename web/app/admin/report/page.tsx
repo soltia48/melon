@@ -11,7 +11,10 @@ export default function ReportPage() {
   const [asOf, setAsOf] = useState<string>(""); // committed ISO string
 
   const state = useAsync<OutstandingReport>(
-    () => api.get<OutstandingReport>("/v1/admin/reports/outstanding-balance" + qs({ as_of: asOf })),
+    () =>
+      api.get<OutstandingReport>(
+        "/v1/admin/reports/outstanding-balance" + qs({ as_of: asOf }),
+      ),
     [asOf],
   );
 
@@ -23,11 +26,17 @@ export default function ReportPage() {
     <>
       <div className="panel">
         <h2>未使用残高レポート</h2>
-        <p className="muted">資金決済法の基準日(3/31・9/30)時点の未使用残高集計に利用できます。</p>
+        <p className="muted">
+          資金決済法の基準日(3/31・9/30)時点の未使用残高集計に利用できます。
+        </p>
         <div className="row">
           <div className="field">
             <label>基準日時(空欄=現在)</label>
-            <input type="datetime-local" value={asOfInput} onChange={(e) => setAsOfInput(e.target.value)} />
+            <input
+              type="datetime-local"
+              value={asOfInput}
+              onChange={(e) => setAsOfInput(e.target.value)}
+            />
           </div>
           <button className="primary" onClick={run}>
             集計
@@ -47,7 +56,9 @@ export default function ReportPage() {
                 </div>
                 <div className="stat">
                   <div className="label">口座数</div>
-                  <div className="value">{r.account_count.toLocaleString()}</div>
+                  <div className="value">
+                    {r.account_count.toLocaleString()}
+                  </div>
                 </div>
                 <div className="stat">
                   <div className="label">基準日時</div>
@@ -79,7 +90,12 @@ export default function ReportPage() {
                           <tr key={m.month}>
                             <td className="mono">{m.month}</td>
                             <td style={{ width: "55%" }}>
-                              <div className="bar" style={{ width: `${((m.amount / max) * 100).toFixed(1)}%` }} />
+                              <div
+                                className="bar"
+                                style={{
+                                  width: `${((m.amount / max) * 100).toFixed(1)}%`,
+                                }}
+                              />
                             </td>
                             <td className="num">{yen(m.amount)}</td>
                           </tr>

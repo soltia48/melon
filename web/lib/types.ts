@@ -9,8 +9,37 @@ export interface User {
   name: string;
   role: Role;
   merchant_id: string | null;
+  /** Merchant user's store scope: null = merchant-wide admin (all stores). */
+  store_id: string | null;
   status: string;
   created_at: string;
+}
+
+/** A store (店舗) under a merchant. */
+export interface Store {
+  id: string;
+  merchant_id: string;
+  code: string;
+  name: string;
+  status: string;
+  is_default: boolean;
+  created_at: string;
+}
+
+/** A store-scoped API key (metadata only; the secret is shown once at issuance). */
+export interface ApiKey {
+  id: string;
+  store_id: string | null;
+  label: string | null;
+  created_at: string;
+  revoked_at: string | null;
+  active: boolean;
+}
+
+export interface CreateApiKeyResp {
+  id: string;
+  store_id: string;
+  api_key: string;
 }
 
 export interface LoginResp {
@@ -83,6 +112,8 @@ export interface AdminTxn {
   idi: string;
   kind: string;
   merchant_id: string | null;
+  store_id: string | null;
+  store_name: string | null;
   amount: number;
   fee: number;
   note: string | null;
@@ -96,6 +127,8 @@ export interface MerchantTxn {
   account_id: string;
   kind: string;
   merchant_id: string | null;
+  store_id: string | null;
+  store_name: string | null;
   amount: number;
   fee: number;
   note: string | null;

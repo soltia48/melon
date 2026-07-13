@@ -16,6 +16,8 @@ import { Spinner, errMsg } from "@/components/ui";
 export interface Tab {
   href: string;
   label: string;
+  /** Hidden for store-scoped merchant users (they manage only their own store). */
+  hideForStoreUser?: boolean;
 }
 
 interface AuthValue {
@@ -100,9 +102,15 @@ export function PortalShell({
       ? `${user.name} — ${merchant.name}(${merchant.code})`
       : `${user.name}(${user.email})`;
 
+  // Store-scoped merchant users only see their own store — hide admin-only tabs.
+  const storeScoped = role === "merchant" && !!user.store_id;
+  const visibleTabs = storeScoped
+    ? tabs.filter((t) => !t.hideForStoreUser)
+    : tabs;
+
   return (
     <AuthContext.Provider value={{ user, merchant, reloadMerchant }}>
-      <Shell brand={brand} tabs={tabs} who={who}>
+      <Shell brand={brand} tabs={visibleTabs} who={who}>
         {children}
       </Shell>
     </AuthContext.Provider>
@@ -123,7 +131,9 @@ function Shell({
   const pathname = usePathname();
   const base = tabs[0].href;
   const isActive = (href: string) =>
-    href === base ? pathname === base : pathname === href || pathname.startsWith(href + "/");
+    href === base
+      ? pathname === base
+      : pathname === href || pathname.startsWith(href + "/");
 
   const signOut = async () => {
     try {
@@ -150,7 +160,11 @@ function Shell({
         </div>
         <nav className="tabs">
           {tabs.map((t) => (
-            <Link key={t.href} href={t.href} className={isActive(t.href) ? "active" : ""}>
+            <Link
+              key={t.href}
+              href={t.href}
+              className={isActive(t.href) ? "active" : ""}
+            >
               {t.label}
             </Link>
           ))}
@@ -214,7 +228,9 @@ function LoginCard({
           autoComplete="username"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && document.getElementById("pw")?.focus()}
+          onKeyDown={(e) =>
+            e.key === "Enter" && document.getElementById("pw")?.focus()
+          }
         />
         <input
           id="pw"
@@ -229,7 +245,10 @@ function LoginCard({
           サインイン
         </button>
         {error && (
-          <p className="muted" style={{ color: "var(--danger)", marginTop: 12 }}>
+          <p
+            className="muted"
+            style={{ color: "var(--danger)", marginTop: 12 }}
+          >
             {error}
           </p>
         )}

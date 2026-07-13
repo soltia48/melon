@@ -533,6 +533,7 @@ pub async fn create_merchant(
     fee_bps: i32,
     credit_limit: i64,
 ) -> Result<Uuid, DbError> {
+    let mut tx = pool.begin().await?;
     let id = Uuid::now_v7();
     sqlx::query(
         "INSERT INTO merchants (id, code, name, fee_bps, credit_limit) VALUES ($1, $2, $3, $4, $5)",
@@ -542,9 +543,134 @@ pub async fn create_merchant(
     .bind(name)
     .bind(fee_bps)
     .bind(credit_limit)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    // Every merchant starts with one default store.
+    sqlx::query(
+        "INSERT INTO stores (id, merchant_id, code, name, is_default)
+         VALUES ($1, $2, 'default', '本店', true)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     Ok(id)
+}
+
+// ----- stores (店舗) -----
+
+#[derive(Debug, Clone)]
+pub struct StoreRow {
+    pub id: Uuid,
+    pub merchant_id: Uuid,
+    pub code: String,
+    pub name: String,
+    pub status: String,
+    pub is_default: bool,
+    pub created_at: Timestamp,
+}
+
+fn store_row(r: sqlx::postgres::PgRow) -> Result<StoreRow, DbError> {
+    Ok(StoreRow {
+        id: r.try_get("id")?,
+        merchant_id: r.try_get("merchant_id")?,
+        code: r.try_get("code")?,
+        name: r.try_get("name")?,
+        status: r.try_get("status")?,
+        is_default: r.try_get("is_default")?,
+        created_at: to_jiff(r.try_get("created_at")?),
+    })
+}
+
+/// Create a store under a merchant. Fails with `StoreCodeTaken` if the merchant
+/// already has a store with that code.
+pub async fn create_store(
+    pool: &Pool,
+    merchant_id: Uuid,
+    code: &str,
+    name: &str,
+) -> Result<Uuid, DbError> {
+    let exists: Option<Uuid> = sqlx::query_scalar("SELECT id FROM merchants WHERE id = $1")
+        .bind(merchant_id)
+        .fetch_optional(pool)
+        .await?;
+    if exists.is_none() {
+        return Err(DbError::MerchantNotFound);
+    }
+    let id = Uuid::now_v7();
+    match sqlx::query("INSERT INTO stores (id, merchant_id, code, name) VALUES ($1, $2, $3, $4)")
+        .bind(id)
+        .bind(merchant_id)
+        .bind(code)
+        .bind(name)
+        .execute(pool)
+        .await
+    {
+        Ok(_) => Ok(id),
+        Err(sqlx::Error::Database(e)) if e.is_unique_violation() => Err(DbError::StoreCodeTaken),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// List a merchant's stores (default first, then by creation order).
+pub async fn list_stores(pool: &Pool, merchant_id: Uuid) -> Result<Vec<StoreRow>, DbError> {
+    let rows = sqlx::query(
+        "SELECT id, merchant_id, code, name, status, is_default, created_at FROM stores
+          WHERE merchant_id = $1 ORDER BY is_default DESC, created_at",
+    )
+    .bind(merchant_id)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(store_row).collect()
+}
+
+pub async fn get_store(pool: &Pool, store_id: Uuid) -> Result<Option<StoreRow>, DbError> {
+    sqlx::query(
+        "SELECT id, merchant_id, code, name, status, is_default, created_at
+           FROM stores WHERE id = $1",
+    )
+    .bind(store_id)
+    .fetch_optional(pool)
+    .await?
+    .map(store_row)
+    .transpose()
+}
+
+/// The id of a merchant's default store.
+pub async fn default_store_id(pool: &Pool, merchant_id: Uuid) -> Result<Option<Uuid>, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT id FROM stores WHERE merchant_id = $1 AND is_default LIMIT 1")
+            .bind(merchant_id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+pub async fn set_store_status(pool: &Pool, store_id: Uuid, status: &str) -> Result<(), DbError> {
+    let affected = sqlx::query("UPDATE stores SET status = $1, updated_at = now() WHERE id = $2")
+        .bind(status)
+        .bind(store_id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    if affected == 0 {
+        return Err(DbError::StoreNotFound);
+    }
+    Ok(())
+}
+
+pub async fn update_store_name(pool: &Pool, store_id: Uuid, name: &str) -> Result<(), DbError> {
+    let affected = sqlx::query("UPDATE stores SET name = $1, updated_at = now() WHERE id = $2")
+        .bind(name)
+        .bind(store_id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    if affected == 0 {
+        return Err(DbError::StoreNotFound);
+    }
+    Ok(())
 }
 
 /// Update a merchant's credit limit (yen, >= 0).
@@ -581,26 +707,32 @@ pub async fn set_merchant_fee(pool: &Pool, merchant_id: Uuid, fee_bps: i32) -> R
     Ok(())
 }
 
-/// A merchant resolved from an API key.
+/// A merchant resolved from an API key, with the store the key belongs to.
 #[derive(Debug, Clone)]
 pub struct MerchantAuth {
     pub merchant_id: Uuid,
     pub status: String,
+    /// The store this API key is scoped to (NULL only for legacy keys predating
+    /// the store backfill).
+    pub store_id: Option<Uuid>,
 }
 
-/// Store a merchant API key (its SHA-256 hash), returning the key id.
+/// Store a store-scoped merchant API key (its SHA-256 hash), returning the key id.
 pub async fn store_api_key(
     pool: &Pool,
     merchant_id: Uuid,
+    store_id: Uuid,
     key_hash: &str,
     label: Option<&str>,
 ) -> Result<Uuid, DbError> {
     let id = Uuid::now_v7();
     sqlx::query(
-        "INSERT INTO merchant_api_keys (id, merchant_id, key_hash, label) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO merchant_api_keys (id, merchant_id, store_id, key_hash, label)
+         VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(id)
     .bind(merchant_id)
+    .bind(store_id)
     .bind(key_hash)
     .bind(label)
     .execute(pool)
@@ -608,11 +740,65 @@ pub async fn store_api_key(
     Ok(id)
 }
 
+/// A stored API key (metadata only — never the secret or its hash).
+#[derive(Debug, Clone)]
+pub struct ApiKeyRow {
+    pub id: Uuid,
+    pub store_id: Option<Uuid>,
+    pub label: Option<String>,
+    pub created_at: Timestamp,
+    pub revoked_at: Option<Timestamp>,
+}
+
+/// List a merchant's API keys (newest first), optionally scoped to one store.
+pub async fn list_api_keys(
+    pool: &Pool,
+    merchant_id: Uuid,
+    store_id: Option<Uuid>,
+) -> Result<Vec<ApiKeyRow>, DbError> {
+    let rows = sqlx::query(
+        "SELECT id, store_id, label, created_at, revoked_at FROM merchant_api_keys
+          WHERE merchant_id = $1 AND ($2::uuid IS NULL OR store_id = $2)
+          ORDER BY created_at DESC",
+    )
+    .bind(merchant_id)
+    .bind(store_id)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(|r| {
+            Ok(ApiKeyRow {
+                id: r.try_get("id")?,
+                store_id: r.try_get("store_id")?,
+                label: r.try_get("label")?,
+                created_at: to_jiff(r.try_get("created_at")?),
+                revoked_at: r.try_get::<Option<_>, _>("revoked_at")?.map(to_jiff),
+            })
+        })
+        .collect()
+}
+
+/// Revoke one API key by id, scoped to `merchant_id` (so a merchant can only
+/// revoke its own). Returns true if a live key was revoked.
+pub async fn revoke_api_key(pool: &Pool, merchant_id: Uuid, key_id: Uuid) -> Result<bool, DbError> {
+    let affected = sqlx::query(
+        "UPDATE merchant_api_keys SET revoked_at = now()
+          WHERE id = $1 AND merchant_id = $2 AND revoked_at IS NULL",
+    )
+    .bind(key_id)
+    .bind(merchant_id)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(affected > 0)
+}
+
 /// Rotate a merchant's API key: revoke every current (non-revoked) key and
 /// store `key_hash` as the new one. Returns the new key id.
 pub async fn rotate_api_key(
     pool: &Pool,
     merchant_id: Uuid,
+    store_id: Uuid,
     key_hash: &str,
     label: Option<&str>,
 ) -> Result<Uuid, DbError> {
@@ -624,19 +810,23 @@ pub async fn rotate_api_key(
     if exists.is_none() {
         return Err(DbError::MerchantNotFound);
     }
+    // Rotate only the target store's live keys.
     sqlx::query(
         "UPDATE merchant_api_keys SET revoked_at = now()
-          WHERE merchant_id = $1 AND revoked_at IS NULL",
+          WHERE merchant_id = $1 AND store_id = $2 AND revoked_at IS NULL",
     )
     .bind(merchant_id)
+    .bind(store_id)
     .execute(&mut *tx)
     .await?;
     let id = Uuid::now_v7();
     sqlx::query(
-        "INSERT INTO merchant_api_keys (id, merchant_id, key_hash, label) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO merchant_api_keys (id, merchant_id, store_id, key_hash, label)
+         VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(id)
     .bind(merchant_id)
+    .bind(store_id)
     .bind(key_hash)
     .bind(label)
     .execute(&mut *tx)
@@ -651,7 +841,7 @@ pub async fn merchant_by_key_hash(
     key_hash: &str,
 ) -> Result<Option<MerchantAuth>, DbError> {
     let row = sqlx::query(
-        "SELECT m.id, m.status FROM merchant_api_keys k
+        "SELECT m.id, m.status, k.store_id FROM merchant_api_keys k
            JOIN merchants m ON m.id = k.merchant_id
           WHERE k.key_hash = $1 AND k.revoked_at IS NULL",
     )
@@ -662,6 +852,7 @@ pub async fn merchant_by_key_hash(
         Some(r) => Ok(Some(MerchantAuth {
             merchant_id: r.try_get("id")?,
             status: r.try_get("status")?,
+            store_id: r.try_get("store_id")?,
         })),
         None => Ok(None),
     }
@@ -728,6 +919,7 @@ pub async fn top_up(
     pool: &Pool,
     account: AccountKey,
     merchant_id: Option<Uuid>,
+    store_id: Option<Uuid>,
     amount: PositiveYen,
     idempotency_key: &str,
     now: Timestamp,
@@ -757,8 +949,8 @@ pub async fn top_up(
 
     let txn_id = Uuid::now_v7();
     let inserted: Option<Uuid> = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO transactions (id, system_code, idm, idi, kind, merchant_id, amount, idempotency_key, occurred_at)
-         VALUES ($1, $2, $3, $4, 'top_up', $5, $6, $7, $8)
+        "INSERT INTO transactions (id, system_code, idm, idi, kind, merchant_id, store_id, amount, idempotency_key, occurred_at)
+         VALUES ($1, $2, $3, $4, 'top_up', $5, $6, $7, $8, $9)
          ON CONFLICT (kind, idempotency_key) DO NOTHING
          RETURNING id",
     )
@@ -767,6 +959,7 @@ pub async fn top_up(
     .bind(idm)
     .bind(idi)
     .bind(merchant_id)
+    .bind(store_id)
     .bind(amount.as_i64())
     .bind(idempotency_key)
     .bind(to_odt(now))
@@ -882,6 +1075,7 @@ pub async fn pay(
     pool: &Pool,
     account: AccountKey,
     merchant_id: Uuid,
+    store_id: Option<Uuid>,
     amount: PositiveYen,
     idempotency_key: &str,
     note: Option<&str>,
@@ -912,8 +1106,8 @@ pub async fn pay(
 
     let txn_id = Uuid::now_v7();
     let inserted: Option<Uuid> = sqlx::query_scalar(
-        "INSERT INTO transactions (id, system_code, idm, idi, kind, merchant_id, amount, fee, idempotency_key, note, occurred_at)
-         VALUES ($1, $2, $3, $4, 'payment', $5, $6, $7, $8, $9, $10)
+        "INSERT INTO transactions (id, system_code, idm, idi, kind, merchant_id, store_id, amount, fee, idempotency_key, note, occurred_at)
+         VALUES ($1, $2, $3, $4, 'payment', $5, $6, $7, $8, $9, $10, $11)
          ON CONFLICT (kind, idempotency_key) DO NOTHING
          RETURNING id",
     )
@@ -922,6 +1116,7 @@ pub async fn pay(
     .bind(idm)
     .bind(idi)
     .bind(merchant_id)
+    .bind(store_id)
     .bind(amount.as_i64())
     .bind(fee.as_i64())
     .bind(idempotency_key)
@@ -1108,7 +1303,7 @@ async fn restore(
 
     // Original payment.
     let prow = sqlx::query(
-        "SELECT system_code, idm, idi, merchant_id, amount, kind FROM transactions WHERE id = $1",
+        "SELECT system_code, idm, idi, merchant_id, store_id, amount, kind FROM transactions WHERE id = $1",
     )
     .bind(payment_txn_id)
     .fetch_optional(&mut *tx)
@@ -1122,6 +1317,8 @@ async fn restore(
     let idm = account.idm.as_bytes().as_slice();
     let idi = account.idi.as_bytes().as_slice();
     let merchant_id: Option<Uuid> = prow.try_get("merchant_id")?;
+    // A refund/void inherits the store of the payment it reverses.
+    let store_id: Option<Uuid> = prow.try_get("store_id")?;
     let payment_amount: i64 = prow.try_get("amount")?;
 
     // Idempotency pre-check — must run before the refundable computation, so a
@@ -1169,8 +1366,8 @@ async fn restore(
 
     let txn_id = Uuid::now_v7();
     let inserted: Option<Uuid> = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO transactions (id, system_code, idm, idi, kind, merchant_id, amount, idempotency_key, related_txn_id, occurred_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        "INSERT INTO transactions (id, system_code, idm, idi, kind, merchant_id, store_id, amount, idempotency_key, related_txn_id, occurred_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          ON CONFLICT (kind, idempotency_key) DO NOTHING
          RETURNING id",
     )
@@ -1180,6 +1377,7 @@ async fn restore(
     .bind(idi)
     .bind(kind)
     .bind(merchant_id)
+    .bind(store_id)
     .bind(refund_amount)
     .bind(idempotency_key)
     .bind(payment_txn_id)
@@ -1352,6 +1550,8 @@ pub struct TransactionRow {
     pub account: AccountKey,
     pub kind: String,
     pub merchant_id: Option<Uuid>,
+    pub store_id: Option<Uuid>,
+    pub store_name: Option<String>,
     pub amount: Yen,
     /// Processing fee (payments only; 0 otherwise).
     pub fee: Yen,
@@ -1369,6 +1569,7 @@ pub struct TransactionRow {
 pub struct TxnFilter {
     pub account: Option<AccountKey>,
     pub merchant_id: Option<Uuid>,
+    pub store_id: Option<Uuid>,
     pub kind: Option<String>,
     pub before: Option<Timestamp>,
     pub limit: i64,
@@ -1385,15 +1586,18 @@ pub async fn list_transactions(
         filter.limit.min(500)
     };
     let rows = sqlx::query(
-        "SELECT id, system_code, idm, idi, kind, merchant_id, amount, fee, note, related_txn_id, occurred_at
-           FROM transactions
-          WHERE ($1::integer IS NULL OR system_code = $1)
-            AND ($2::bytea IS NULL OR idm = $2)
-            AND ($3::bytea IS NULL OR idi = $3)
-            AND ($4::uuid IS NULL OR merchant_id = $4)
-            AND ($5::text IS NULL OR kind = $5)
-            AND ($6::timestamptz IS NULL OR occurred_at < $6)
-          ORDER BY occurred_at DESC, id DESC
+        "SELECT t.id, t.system_code, t.idm, t.idi, t.kind, t.merchant_id, t.store_id,
+                s.name AS store_name, t.amount, t.fee, t.note, t.related_txn_id, t.occurred_at
+           FROM transactions t
+           LEFT JOIN stores s ON s.id = t.store_id
+          WHERE ($1::integer IS NULL OR t.system_code = $1)
+            AND ($2::bytea IS NULL OR t.idm = $2)
+            AND ($3::bytea IS NULL OR t.idi = $3)
+            AND ($4::uuid IS NULL OR t.merchant_id = $4)
+            AND ($5::text IS NULL OR t.kind = $5)
+            AND ($6::timestamptz IS NULL OR t.occurred_at < $6)
+            AND ($8::uuid IS NULL OR t.store_id = $8)
+          ORDER BY t.occurred_at DESC, t.id DESC
           LIMIT $7",
     )
     .bind(filter.account.map(|a| a.system_code as i32))
@@ -1403,6 +1607,7 @@ pub async fn list_transactions(
     .bind(filter.kind.as_deref())
     .bind(filter.before.map(to_odt))
     .bind(limit)
+    .bind(filter.store_id)
     .fetch_all(pool)
     .await?;
 
@@ -1413,6 +1618,8 @@ pub async fn list_transactions(
                 account: account_from_row(&r)?,
                 kind: r.try_get("kind")?,
                 merchant_id: r.try_get("merchant_id")?,
+                store_id: r.try_get("store_id")?,
+                store_name: r.try_get("store_name")?,
                 amount: Yen::new(r.try_get::<i64, _>("amount")?),
                 fee: Yen::new(r.try_get::<i64, _>("fee")?),
                 note: r.try_get("note")?,

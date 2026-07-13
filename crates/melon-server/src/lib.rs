@@ -22,7 +22,7 @@ use axum::http::header::{
 };
 use axum::middleware::{self, Next};
 use axum::response::Response;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, patch, post};
 use jiff::tz::TimeZone;
 
 use melon_auth::SessionManager;
@@ -119,9 +119,32 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/payments/{payment_id}/void", post(handlers::void))
         .route("/v1/payments/refundable", get(handlers::refundable))
         .route("/v1/transactions", get(handlers::transactions))
+        // Merchant-managed stores (read) and store-scoped API keys.
+        .route("/v1/stores", get(handlers::merchant_list_stores))
+        .route(
+            "/v1/stores/{store_id}/api-keys",
+            get(handlers::merchant_list_api_keys).post(handlers::merchant_create_api_key),
+        )
+        .route(
+            "/v1/stores/{store_id}/api-keys/{key_id}",
+            delete(handlers::merchant_revoke_api_key),
+        )
         .route(
             "/v1/merchants",
             get(handlers::list_merchants).post(handlers::create_merchant),
+        )
+        // Admin-managed stores under a merchant.
+        .route(
+            "/v1/admin/merchants/{merchant_id}/stores",
+            get(handlers::admin_list_stores).post(handlers::admin_create_store),
+        )
+        .route(
+            "/v1/admin/stores/{store_id}",
+            patch(handlers::admin_update_store),
+        )
+        .route(
+            "/v1/admin/stores/{store_id}/status",
+            post(handlers::admin_set_store_status),
         )
         .route(
             "/v1/admin/merchants/{merchant_id}/status",
