@@ -30,6 +30,10 @@ write_if_absent secrets/db_password "$DB_PASSWORD"
 # `db` is the compose service name; 5432 is the in-network port.
 write_if_absent secrets/database_url "postgres://melon:${DB_PASSWORD}@db:5432/melon"
 write_if_absent secrets/bootstrap_admin_password "$ADMIN_PASSWORD"
+# Turnstile is OPTIONAL. Compose requires the secret file to exist, so create it
+# EMPTY — the server reads an empty secret as "challenge disabled". Paste the
+# secret key in (and set MELON_TURNSTILE_SITE_KEY in .env) to turn it on.
+write_if_absent secrets/turnstile_secret ""
 
 echo
 # Two things cannot be generated — they must be supplied.
@@ -50,6 +54,15 @@ else
   echo "            copy the token into deploy/.env, then chmod 600 .env"
   echo "            Public hostname: <your-host> → HTTP → server:8080"
   echo "          (service must be server:8080 — the compose service, not localhost)"
+fi
+# Turnstile is optional — say whether the sign-in challenge is on.
+if [[ -s secrets/turnstile_secret ]] && grep -qE '^MELON_TURNSTILE_SITE_KEY=.+' .env 2>/dev/null; then
+  echo "  keep    Turnstile ENABLED on sign-in (site key in .env + secret file)"
+else
+  echo "  off     Turnstile sign-in challenge is DISABLED (optional). To enable:"
+  echo "            Cloudflare → Turnstile → Add widget (hostname = your public host)"
+  echo "            site key   → MELON_TURNSTILE_SITE_KEY in deploy/.env"
+  echo "            secret key → deploy/secrets/turnstile_secret (chmod 444)"
 fi
 
 echo

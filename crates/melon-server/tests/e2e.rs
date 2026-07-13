@@ -87,6 +87,7 @@ fn build_app(pool: PgPool) -> Router {
         cookie_secure: false,
         default_fee_bps: 0,
         default_credit_limit: 10_000_000,
+        turnstile: None,
     };
     router(state)
 }

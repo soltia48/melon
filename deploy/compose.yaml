@@ -98,10 +98,18 @@ services:
       FELICA_SESSION_TTL: ${FELICA_SESSION_TTL:-300}
       FELICA_MAX_SESSIONS: ${FELICA_MAX_SESSIONS:-1024}
       RUST_LOG: ${RUST_LOG:-info}
+
+      # Cloudflare Turnstile on the sign-in form. OPTIONAL: the challenge turns on
+      # only when BOTH the (public) site key below and a non-empty secret file are
+      # present. Leaving either blank disables it — `init-secrets.sh` creates an
+      # empty placeholder so compose always finds the file.
+      MELON_TURNSTILE_SITE_KEY: ${MELON_TURNSTILE_SITE_KEY:-}
+      MELON_TURNSTILE_SECRET_FILE: /run/secrets/turnstile_secret
     secrets:
       - database_url
       - bootstrap_admin_password
       - felica_keys
+      - turnstile_secret
     # Reachable only by cloudflared, on the internal network.
     expose:
       - "8080"
@@ -204,6 +212,11 @@ secrets:
   # can authenticate cards. Never bake it into the image, never commit it.
   felica_keys:
     file: ./secrets/keys.jsonl
+  # Cloudflare Turnstile secret key (the one that verifies sign-in tokens).
+  # OPTIONAL — `init-secrets.sh` creates this file EMPTY, which the server reads
+  # as "Turnstile disabled". Paste the secret in to turn the challenge on.
+  turnstile_secret:
+    file: ./secrets/turnstile_secret
 
 volumes:
   pgdata:

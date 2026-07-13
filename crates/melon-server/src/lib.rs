@@ -73,6 +73,36 @@ pub struct AppState {
     pub default_fee_bps: i32,
     /// Default credit limit (yen) for newly created merchants.
     pub default_credit_limit: i64,
+    /// Cloudflare Turnstile for login bot-protection; `None` disables the
+    /// challenge (login proceeds without it).
+    pub turnstile: Option<Turnstile>,
+}
+
+/// Cloudflare Turnstile configuration for the sign-in form. Present only when a
+/// site key **and** secret are configured.
+#[derive(Clone)]
+pub struct Turnstile {
+    /// Public site key handed to the browser to render the widget.
+    pub site_key: String,
+    /// Secret key used server-side to verify tokens — never sent to the browser.
+    pub secret: String,
+    /// Shared client for the Cloudflare `siteverify` call.
+    pub http: reqwest::Client,
+}
+
+impl Turnstile {
+    /// Build a Turnstile config with its own HTTP client.
+    pub fn new(site_key: String, secret: String) -> Self {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .expect("build reqwest client for Turnstile");
+        Turnstile {
+            site_key,
+            secret,
+            http,
+        }
+    }
 }
 
 /// Build the API router.
@@ -80,6 +110,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(handlers::healthz))
         // --- human sign-on ---
+        .route("/v1/auth/config", get(handlers::auth_config))
         .route("/v1/auth/login", post(handlers::login))
         .route("/v1/auth/logout", post(handlers::logout))
         .route("/v1/auth/me", get(handlers::auth_me))

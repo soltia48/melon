@@ -132,14 +132,94 @@ fn user_view(u: melon_db::users::User) -> UserView {
 pub struct LoginReq {
     pub email: String,
     pub password: String,
+    /// Cloudflare Turnstile token (`cf-turnstile-response`), required when
+    /// Turnstile is configured.
+    pub turnstile_token: Option<String>,
+}
+
+/// `GET /v1/auth/config`: unauthenticated hints the sign-in page needs before a
+/// user logs in (currently just the Turnstile site key, if enabled).
+#[derive(Serialize)]
+pub struct AuthConfigResp {
+    /// Public Turnstile site key, or `null` when the challenge is disabled.
+    pub turnstile_site_key: Option<String>,
+}
+
+pub async fn auth_config(State(state): State<AppState>) -> Json<AuthConfigResp> {
+    Json(AuthConfigResp {
+        turnstile_site_key: state.turnstile.as_ref().map(|t| t.site_key.clone()),
+    })
+}
+
+/// The caller's IP as seen behind Cloudflare (or a reverse proxy), for the
+/// optional `remoteip` field of Turnstile's siteverify.
+fn client_ip(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("cf-connecting-ip")
+        .or_else(|| headers.get("x-forwarded-for"))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Verify a Turnstile token against Cloudflare's siteverify. Returns an error the
+/// sign-in handler surfaces (and the frontend resets the widget on).
+async fn verify_turnstile(
+    ts: &crate::Turnstile,
+    token: &str,
+    remote_ip: Option<&str>,
+) -> Result<(), ApiError> {
+    if token.trim().is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "TURNSTILE_REQUIRED",
+            "bot verification is required",
+        ));
+    }
+    #[derive(Deserialize)]
+    struct SiteVerify {
+        success: bool,
+    }
+    let mut form = vec![("secret", ts.secret.as_str()), ("response", token)];
+    if let Some(ip) = remote_ip {
+        form.push(("remoteip", ip));
+    }
+    let outcome = ts
+        .http
+        .post("https://challenges.cloudflare.com/turnstile/v0/siteverify")
+        .form(&form)
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status);
+    let outcome = match outcome {
+        Ok(resp) => resp.json::<SiteVerify>().await,
+        Err(e) => Err(e),
+    };
+    match outcome {
+        Ok(v) if v.success => Ok(()),
+        Ok(_) => Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "TURNSTILE_FAILED",
+            "bot verification failed — please try again",
+        )),
+        Err(_) => Err(ApiError::internal("bot verification is unavailable")),
+    }
 }
 
 /// Sign in. On success the session token is delivered **only** as an HttpOnly
 /// cookie — it is never in the response body, so JavaScript can't read (or leak) it.
 pub async fn login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<LoginReq>,
 ) -> Result<Response, ApiError> {
+    // Gate the whole attempt behind Turnstile (when configured) before touching
+    // the database, so login can't be used as a bot-driven password oracle.
+    if let Some(ts) = &state.turnstile {
+        let token = req.turnstile_token.as_deref().unwrap_or("");
+        verify_turnstile(ts, token, client_ip(&headers).as_deref()).await?;
+    }
+
     let found = melon_db::users::user_for_login(&state.pool, req.email.trim()).await?;
 
     // Verify a hash even when the user is unknown, so a wrong email and a wrong

@@ -32,6 +32,8 @@ argon2.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+# Server-side verification of Cloudflare Turnstile login tokens.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [dev-dependencies]
 felica-rs.workspace = true

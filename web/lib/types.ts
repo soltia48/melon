@@ -46,6 +46,12 @@ export interface LoginResp {
   user: User;
 }
 
+/** Unauthenticated sign-in page config (`GET /v1/auth/config`). */
+export interface AuthConfig {
+  /** Cloudflare Turnstile site key, or null when the challenge is disabled. */
+  turnstile_site_key: string | null;
+}
+
 export interface Merchant {
   id: string;
   code: string;

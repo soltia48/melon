@@ -14,11 +14,21 @@
 | `MELON_SWEEP_INTERVAL_SECS` | `3600` | 失効スイープの実行間隔(秒) |
 | `MELON_DEFAULT_FEE_BPS` | `0` | 新規加盟店の既定手数料率(bps) |
 | `MELON_DEFAULT_CREDIT_LIMIT` | `0` | 新規加盟店の既定与信限度(円) |
+| `MELON_TURNSTILE_SITE_KEY` | — | Cloudflare Turnstile の**サイトキー**(公開値)。サインイン画面のウィジェット描画に使う |
+| `MELON_TURNSTILE_SECRET` | — | 同**シークレットキー**(秘匿)。サーバーが siteverify でトークンを検証する |
 | `FELICA_SESSION_TTL` | `300` | 認証セッションのアイドル TTL(秒) |
 | `FELICA_MAX_SESSIONS` | `1024` | 同時セッション上限 |
 | `RUST_LOG` | `info` | ログレベル(tracing) |
 
 > ⚠️ `MELON_DEFAULT_CREDIT_LIMIT` が 0 の場合、与信限度未設定の加盟店は topup を売れません(最初の topup で精算残高がマイナスになり拒否)。加盟店ごとに与信限度を設定するか、この既定値を設定してください。
+
+### Cloudflare Turnstile(サインインの bot 対策)
+
+管理画面・加盟店ポータルのサインインに Turnstile を適用できます。**サイトキーとシークレットの両方**を設定したときのみ有効になり、片方でも欠けると無効(チャレンジ無しでサインイン)です。ローカル開発やテストでは未設定のままで構いません。
+
+- サイトキーは公開値で、フロントエンドが `GET /v1/auth/config` から**実行時に取得**します(1 つのイメージをどの環境でも使えるよう、ビルド時に焼き込みません)。
+- シークレットはサーバーのみが保持し、Cloudflare の `siteverify` でトークンを検証します。ブラウザには決して渡りません。
+- トークンは使い捨てです。サインイン失敗時、フロントエンドはウィジェットを自動でリセットします。
 
 ## データベース
 

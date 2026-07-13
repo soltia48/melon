@@ -60,6 +60,13 @@ async fn run(config: Config) -> Result<(), String> {
     }
 
     let tz = melon_core::expiry::expiry_timezone().map_err(|e| e.to_string())?;
+    let turnstile = config
+        .turnstile
+        .clone()
+        .map(|(site_key, secret)| melon_server::Turnstile::new(site_key, secret));
+    if turnstile.is_some() {
+        tracing::info!("Cloudflare Turnstile is enabled on the sign-in form");
+    }
     let state = AppState {
         pool,
         manager,
@@ -68,6 +75,7 @@ async fn run(config: Config) -> Result<(), String> {
         cookie_secure: config.cookie_secure,
         default_fee_bps: config.default_fee_bps,
         default_credit_limit: config.default_credit_limit,
+        turnstile,
     };
     spawn_expiry_sweeper(state.clone(), config.sweep_interval);
     melon_server::spawn_session_reaper(state.clone());

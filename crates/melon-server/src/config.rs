@@ -24,6 +24,9 @@ pub struct Config {
     pub default_fee_bps: i32,
     /// Default credit limit (yen) applied to new merchants.
     pub default_credit_limit: i64,
+    /// Cloudflare Turnstile `(site_key, secret)` for login bot-protection.
+    /// Enabled only when both are provided.
+    pub turnstile: Option<(String, String)>,
 }
 
 impl Config {
@@ -53,6 +56,19 @@ impl Config {
             _ => None,
         };
 
+        // Turnstile is enabled only when BOTH the public site key and the secret
+        // are present (the frontend needs the site key to render the widget, the
+        // server needs the secret to verify tokens).
+        let turnstile = match (
+            std::env::var("MELON_TURNSTILE_SITE_KEY")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
+            env_secret("MELON_TURNSTILE_SECRET"),
+        ) {
+            (Some(site_key), Some(secret)) => Some((site_key, secret)),
+            _ => None,
+        };
+
         Ok(Self {
             database_url,
             bind_addr,
@@ -65,6 +81,7 @@ impl Config {
             bootstrap_admin,
             default_fee_bps: parse_u64("MELON_DEFAULT_FEE_BPS", 0).min(10000) as i32,
             default_credit_limit: parse_u64("MELON_DEFAULT_CREDIT_LIMIT", 0) as i64,
+            turnstile,
         })
     }
 }
