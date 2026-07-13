@@ -915,6 +915,7 @@ async fn ensure_account(tx: &mut sqlx::PgConnection, account: AccountKey) -> Res
 /// `idempotency_key`. `merchant_id` records which merchant performed the top-up
 /// (they collected the cash on the issuer's behalf); `None` for an issuer/system
 /// top-up.
+#[allow(clippy::too_many_arguments)]
 pub async fn top_up(
     pool: &Pool,
     account: AccountKey,
@@ -1071,6 +1072,7 @@ pub async fn top_up(
 
 /// Charge `amount` from `account` on behalf of `merchant_id`, drawing
 /// soonest-expiry first. Atomic and never overspends. Idempotent.
+#[allow(clippy::too_many_arguments)]
 pub async fn pay(
     pool: &Pool,
     account: AccountKey,

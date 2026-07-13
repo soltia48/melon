@@ -1343,10 +1343,8 @@ async fn authorize_store(
     if store.merchant_id != caller.merchant_id {
         return Err(ApiError::not_found("store not found"));
     }
-    if let Some(scope) = caller.store_id {
-        if scope != store_id {
-            return Err(ApiError::forbidden("outside your store scope"));
-        }
+    if caller.store_id.is_some_and(|scope| scope != store_id) {
+        return Err(ApiError::forbidden("outside your store scope"));
     }
     Ok(())
 }

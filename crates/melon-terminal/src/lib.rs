@@ -504,10 +504,12 @@ pub fn run_operation(
             );
             let mut body = json!({ "session_id": session_id, "amount": amount });
             // Only payments carry an optional merchant note.
-            if op == Op::Pay {
-                if let Some(n) = note.map(str::trim).filter(|s| !s.is_empty()) {
-                    body["note"] = json!(n);
-                }
+            let note = note
+                .filter(|_| op == Op::Pay)
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            if let Some(n) = note {
+                body["note"] = json!(n);
             }
             post(
                 http,
