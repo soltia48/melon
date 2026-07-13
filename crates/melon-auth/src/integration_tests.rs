@@ -191,7 +191,12 @@ async fn authenticated_idi_is_exposed_and_spend_is_one_shot() {
 
 #[tokio::test]
 async fn spend_on_unknown_session_is_not_found() {
-    let manager = SessionManager::new(Arc::new(keystore()), None, Duration::from_secs(60), 16);
+    let manager = SessionManager::new(
+        Arc::new(keystore()),
+        Some(HashSet::from([0x14])),
+        Duration::from_secs(60),
+        16,
+    );
     assert_eq!(manager.authenticated_account("deadbeef"), None);
     assert_eq!(manager.consume_spend("deadbeef").unwrap_err().status, 404);
 }
@@ -215,7 +220,12 @@ async fn disallowed_command_code_is_forbidden() {
 
 #[tokio::test]
 async fn unknown_session_is_not_found() {
-    let manager = SessionManager::new(Arc::new(keystore()), None, Duration::from_secs(60), 16);
+    let manager = SessionManager::new(
+        Arc::new(keystore()),
+        Some(HashSet::from([0x14])),
+        Duration::from_secs(60),
+        16,
+    );
     let err = manager
         .handle_encryption_exchange(EncryptionExchangeInput {
             session_id: Some("deadbeef".to_string()),
@@ -230,7 +240,12 @@ async fn unknown_session_is_not_found() {
 
 #[tokio::test]
 async fn mutual_auth_start_requires_idm_and_pmm() {
-    let manager = SessionManager::new(Arc::new(keystore()), None, Duration::from_secs(60), 16);
+    let manager = SessionManager::new(
+        Arc::new(keystore()),
+        Some(HashSet::from([0x14])),
+        Duration::from_secs(60),
+        16,
+    );
     let err = manager
         .handle_mutual_authentication(MutualAuthInput {
             system_code: Some(SYSTEM_CODE),

@@ -6,6 +6,7 @@
 //! verified IDi itself, and only then accepts money operations bound to that
 //! authenticated session.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -71,7 +72,12 @@ fn relay_to_card(emulator: &mut FelicaStandardEmulator, frame_hex: &str) -> Stri
 }
 
 fn build_app(pool: PgPool) -> Router {
-    let manager = SessionManager::new(Arc::new(keystore()), None, Duration::from_secs(60), 16);
+    let manager = SessionManager::new(
+        Arc::new(keystore()),
+        Some(HashSet::from([0x14])),
+        Duration::from_secs(60),
+        16,
+    );
     let tz = melon_core::expiry::expiry_timezone().unwrap();
     let state = AppState {
         pool,
