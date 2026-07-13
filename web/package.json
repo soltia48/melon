@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "marked": "^18.0.6",
+    "marked-cjk-friendly": "^0.1.0",
     "next": "15.5.20",
     "react": "19.2.7",
     "react-dom": "19.2.7"

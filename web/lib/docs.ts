@@ -1,11 +1,19 @@
 import fs from "node:fs";
 import path from "node:path";
-import { marked } from "marked";
+import { Marked } from "marked";
+import markedCjkFriendly from "marked-cjk-friendly";
 
 // The legal documents are authored as Markdown in `web/content/` (the single
 // source of truth) and rendered to HTML at BUILD time, so the published pages are
 // fully static — the runtime image never reads them from disk.
 const CONTENT_DIR = path.join(process.cwd(), "content");
+
+// CommonMark's emphasis rules were written for languages that put spaces around
+// words: a closing `**` only closes if what precedes it is not punctuation. In
+// Japanese, `**…します。**したがって…` therefore does NOT close — marked emits the
+// asterisks literally. This extension relaxes the flanking rules for CJK text.
+// See https://github.com/commonmark/commonmark-spec/issues/650
+const marked = new Marked(markedCjkFriendly());
 
 export interface LegalDoc {
   /** The document's top-level `#` heading, used as the page title. */
@@ -24,9 +32,16 @@ export function renderLegalDoc(file: string): LegalDoc {
   const title = heading ? heading[0].replace(/^#\s*/, "").trim() : "Melon";
   const body = heading ? md.replace(heading[0], "") : md;
 
-  return {
-    title,
-    // Trusted, in-repo content — no user input reaches this renderer.
-    html: marked.parse(body.trimStart(), { async: false }),
-  };
+  // Trusted, in-repo content — no user input reaches this renderer.
+  const html = marked.parse(body.trimStart(), { async: false });
+
+  // Unclosed emphasis renders as bare `**` on a published legal page, which is
+  // easy to miss in review. Fail the build instead of shipping it.
+  if (html.includes("**")) {
+    throw new Error(
+      `${file}: emphasis markers left unrendered (literal "**" in the output)`,
+    );
+  }
+
+  return { title, html };
 }
