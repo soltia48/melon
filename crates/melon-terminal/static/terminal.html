@@ -951,16 +951,23 @@
             return m.created_at;
           }
         })();
-        return `<h2>加盟店情報</h2>
+        const s = m.store;
+        const storeRows = s
+          ? `<div class="r"><span class="k">店舗</span><span>${esc(s.name)}</span></div>
+      <div class="r"><span class="k">店舗コード</span><span class="mono">${esc(s.code)}</span></div>
+      <div class="r"><span class="k">店舗状態</span><span>${esc(s.status)}</span></div>`
+          : "";
+        return `<h2>加盟店・店舗情報</h2>
     <div class="big ${m.collected < 0 ? "neg" : ""}">${yen(m.collected)}</div>
     <p class="sub">精算残高(発行者からの受取額)</p>
     <div class="rows">
+      ${storeRows}
       <div class="r"><span class="k">チャージ可能額</span><span class="${chargeable < 0 ? "neg" : ""}">${yen(chargeable)}</span></div>
       <div class="r"><span class="k">決済手数料率</span><span>${((m.fee_bps || 0) / 100).toFixed(2)}%</span></div>
       <div class="r"><span class="k">与信限度</span><span>${yen(m.credit_limit)}</span></div>
-      <div class="r"><span class="k">コード</span><span class="mono">${esc(m.code)}</span></div>
-      <div class="r"><span class="k">名称</span><span>${esc(m.name)}</span></div>
-      <div class="r"><span class="k">状態</span><span>${esc(m.status)}</span></div>
+      <div class="r"><span class="k">加盟店コード</span><span class="mono">${esc(m.code)}</span></div>
+      <div class="r"><span class="k">加盟店名</span><span>${esc(m.name)}</span></div>
+      <div class="r"><span class="k">加盟店状態</span><span>${esc(m.status)}</span></div>
       <div class="r"><span class="k">登録日時</span><span class="mono">${esc(dt)}</span></div>
     </div>
     <div class="btns"><button class="btn-primary" onclick="closeInfo()">閉じる</button></div>`;

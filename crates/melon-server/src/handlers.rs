@@ -451,14 +451,30 @@ async fn create_user_checked(
 }
 
 /// The authenticated merchant's own profile and settlement balance.
+/// `/v1/me`: the caller's merchant, plus the store it is scoped to (the API key's
+/// store for a terminal, or a store user's store; `null` for a merchant-wide admin).
+#[derive(Serialize)]
+pub struct MeResp {
+    #[serde(flatten)]
+    merchant: MerchantView,
+    store: Option<StoreView>,
+}
+
 pub async fn me(
     State(state): State<AppState>,
     merchant: AuthedMerchant,
-) -> Result<Json<MerchantView>, ApiError> {
+) -> Result<Json<MeResp>, ApiError> {
     let m = ops::get_merchant(&state.pool, merchant.merchant_id)
         .await?
         .ok_or_else(|| ApiError::not_found("merchant not found"))?;
-    Ok(Json(merchant_view(m)))
+    let store = match merchant.store_id {
+        Some(sid) => ops::get_store(&state.pool, sid).await?.map(store_view),
+        None => None,
+    };
+    Ok(Json(MeResp {
+        merchant: merchant_view(m),
+        store,
+    }))
 }
 
 async fn verify_payment_owner(
