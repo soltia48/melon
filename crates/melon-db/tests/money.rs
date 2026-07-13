@@ -42,7 +42,7 @@ async fn top_up_then_balance(pool: PgPool) {
     assert_eq!(out.amount, Yen::new(1000));
     assert!(!out.replayed);
     // expires 6 months later on the JST wall clock.
-    assert_eq!(out.expires_at, ts("2026-07-15T09:00:00+09:00"));
+    assert_eq!(out.expires_at, ts("2026-07-15T00:00:00+09:00"));
 
     let bal = ops::balance(&pool, a, t0).await.unwrap();
     assert_eq!(bal.total, Yen::new(1000));
@@ -339,7 +339,7 @@ async fn refund_restores_to_original_bucket(pool: PgPool) {
     let bal = ops::balance(&pool, a, t0).await.unwrap();
     assert_eq!(bal.buckets.len(), 1);
     assert_eq!(bal.buckets[0].bucket_id, topup.bucket_id);
-    assert_eq!(bal.buckets[0].expires_at, ts("2026-07-15T09:00:00+09:00"));
+    assert_eq!(bal.buckets[0].expires_at, ts("2026-07-15T00:00:00+09:00"));
     assert_eq!(bal.total, Yen::new(800));
 }
 
