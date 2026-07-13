@@ -1,8 +1,14 @@
 import type { Metadata } from "next";
-import "./globals.css";
+import "../globals.css";
 import { ToastProvider } from "@/components/toast";
 import { SITE_DESCRIPTION, SITE_NAME, SITE_URL } from "@/lib/site";
 
+/**
+ * Root layout for everything Japanese: the landing page, the legal documents and
+ * both consoles. The English landing page has its own root layout under
+ * `app/(en)` — a nested layout cannot change `<html lang>`, and serving English
+ * under `lang="ja"` misleads both crawlers and screen readers.
+ */
 const TITLE = "Melon — オンライン前払式支払手段プラットフォーム";
 
 export const metadata: Metadata = {
@@ -15,6 +21,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     locale: "ja_JP",
+    alternateLocale: "en_US",
     siteName: SITE_NAME,
     url: SITE_URL,
     title: TITLE,
@@ -23,7 +30,7 @@ export const metadata: Metadata = {
   twitter: { card: "summary_large_image" },
 };
 
-export default function RootLayout({
+export default function JaRootLayout({
   children,
 }: {
   children: React.ReactNode;

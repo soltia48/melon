@@ -606,6 +606,21 @@ tr.clickable:hover td {
   max-width: 42ch;
   margin: 20px 0 0;
 }
+/* Language toggle in the nav (ja <-> en). */
+.lp .nav .lang {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--lp-body);
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.lp .nav .lang:hover {
+  color: var(--accent);
+  background: var(--accent-weak);
+}
+
 /* The "you need nothing" chips under the hero lead. */
 .lp .nofuss {
   list-style: none;
@@ -631,9 +646,13 @@ tr.clickable:hover td {
   flex: none;
 }
 .lp .nofuss b {
-  margin-left: 6px;
   color: var(--accent);
   font-weight: 700;
+}
+/* 「…不要」— Japanese puts the emphasis last, with no space before it. English
+   puts it first ("No app to install"), where the space in the markup is enough. */
+.lp .nofuss b:not(:first-child) {
+  margin-left: 6px;
 }
 
 .lp .hero .actions {
