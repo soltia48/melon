@@ -696,7 +696,7 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 [[package]]
 name = "felica-rs"
 version = "0.1.0"
-source = "git+ssh://git@github.com/soltia48/felica-rs.git?rev=6e01f7d3ee41a978b2193f17e4581bbe55e02fa2#6e01f7d3ee41a978b2193f17e4581bbe55e02fa2"
+source = "git+ssh://git@github.com/soltia48/felica-rs.git?branch=main#3d9a1d2460f069958b8f68945ca230233971b50c"
 dependencies = [
  "aes",
  "cbc",
@@ -2943,9 +2943,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.23.4"
+version = "1.23.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf80a72845275afea99e7f2b434723d3bc7e38470fcd1c7ed39a599c73319a53"
+checksum = "ea5fab0d6c3c01ae70085a09cb03d4c7a1d6314e2b3e075392783396d724ca0a"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
@@ -3384,6 +3384,6 @@ dependencies = [
 
 [[package]]
 name = "zmij"
-version = "1.0.21"
+version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+checksum = "bd2f034a4bebf216c9e4b7083603e024cf930873fd67830cfb083c9fa33129d9"
