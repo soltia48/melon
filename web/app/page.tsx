@@ -34,7 +34,9 @@ export default function Home() {
       <header className="hero" id="top">
         <div className="wrap">
           <div>
-            <div className="eyebrow anim d1">オンライン前払式支払手段プラットフォーム</div>
+            <div className="eyebrow anim d1">
+              オンライン前払式支払手段プラットフォーム
+            </div>
             <h1 className="anim d2">
               かざすだけ。
               <br />
@@ -83,18 +85,38 @@ export default function Home() {
         <div className="wrap">
           <div className="value">
             <div className="vic">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <path d="M7 8.5c2.4 1.8 2.4 5.2 0 7M11 5.5c4 3 4 9.5 0 12.5M15 3c5.4 4 5.4 13 0 17" />
               </svg>
             </div>
             <div>
               <h3>かざすだけの操作</h3>
-              <p>支払いもチャージも、カードをかざすだけ。迷う操作はありません。</p>
+              <p>
+                支払いもチャージも、カードをかざすだけ。迷う操作はありません。
+              </p>
             </div>
           </div>
           <div className="value">
             <div className="vic">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <rect x="3" y="6" width="18" height="12" rx="2" />
                 <path d="M3 10h18M7 14h4" />
               </svg>
@@ -106,7 +128,16 @@ export default function Home() {
           </div>
           <div className="value">
             <div className="vic">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <circle cx="8" cy="8" r="4.2" />
                 <path d="M11 11l7 7M15.5 17.5l2-2M13.5 19.5l2-2" />
               </svg>
@@ -131,19 +162,38 @@ export default function Home() {
           <div className="grid">
             <article className="feature">
               <div className="ic">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z" />
                   <path d="M9.2 12l2 2 3.6-3.8" />
                 </svg>
               </div>
               <h3>サーバ検証済みの本人性</h3>
               <p>
-                オンライン相互認証で得た IDi をアカウントキーに。加盟店は暗号鍵を持たず、残高もカードに書かないため、なりすましも改ざんもできません。
+                オンライン相互認証で得た IDi
+                をアカウントキーに。加盟店は暗号鍵を持たず、残高もカードに書かないため、なりすましも改ざんもできません。
               </p>
             </article>
             <article className="feature">
               <div className="ic">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <path d="M6 3h9l4 4v14H6z" />
                   <path d="M9 8h5M9 12h7M9 16h7" />
                 </svg>
@@ -155,19 +205,38 @@ export default function Home() {
             </article>
             <article className="feature">
               <div className="ic">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <circle cx="12" cy="13" r="8" />
                   <path d="M12 9v4l2.5 2M9 2h6" />
                 </svg>
               </div>
               <h3>6 か月失効(資金決済法に配慮)</h3>
               <p>
-                チャージごとに JST で 6 か月失効。発行日から 6 か月以内の適用除外を、厳密・監査可能・不変に実装しています。
+                チャージごとに JST で 6 か月失効。発行日から 6
+                か月以内の適用除外を、厳密・監査可能・不変に実装しています。
               </p>
             </article>
             <article className="feature">
               <div className="ic">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <rect x="3" y="4" width="18" height="16" rx="2" />
                   <path d="M3 9h18M9 9v11" />
                 </svg>
@@ -194,17 +263,25 @@ export default function Home() {
             <div className="step">
               <div className="n" />
               <h3>カードをかざす</h3>
-              <p>加盟店端末が FeliCa をポーリングし、IDm / PMm を取得。端末は鍵を持ちません。</p>
+              <p>
+                加盟店端末が FeliCa をポーリングし、IDm / PMm
+                を取得。端末は鍵を持ちません。
+              </p>
             </div>
             <div className="step">
               <div className="n" />
               <h3>サーバで相互認証</h3>
-              <p>端末はフレームを中継するだけ。サーバが鍵で認証し、検証済み IDi と認証済みセッションを得ます。</p>
+              <p>
+                端末はフレームを中継するだけ。サーバが鍵で認証し、検証済み IDi
+                と認証済みセッションを得ます。
+              </p>
             </div>
             <div className="step">
               <div className="n" />
               <h3>残高で決済</h3>
-              <p>そのセッションで支払い・チャージ・残高照会・返金。台帳に記帳して完了します。</p>
+              <p>
+                そのセッションで支払い・チャージ・残高照会・返金。台帳に記帳して完了します。
+              </p>
             </div>
           </div>
         </div>
@@ -215,52 +292,105 @@ export default function Home() {
           <div className="sec-head">
             <div className="eyebrow">対応端末</div>
             <h2>どの端末からでも、同じ台帳へ。</h2>
-            <p>加盟店 API キーで認証。金銭操作は冪等キーで二重処理を防ぎます。</p>
+            <p>
+              加盟店 API キーで認証。金銭操作は冪等キーで二重処理を防ぎます。
+            </p>
           </div>
           <div className="term">
             <div className="t">
               <div className="ic">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <rect x="6" y="2" width="12" height="20" rx="2.5" />
                   <path d="M11 18h2" />
                 </svg>
               </div>
               <h3>Android アプリ</h3>
-              <p>NFC 対応端末を、かざすだけの POS 端末に。テンキー入力と確認ボタンで誤タップも防止。</p>
+              <p>
+                NFC 対応端末を、かざすだけの POS
+                端末に。テンキー入力と確認ボタンで誤タップも防止。
+              </p>
               <div className="t-foot">
                 <span className="pill">NFC-F / FeliCa</span>
-                <a className="dl" href={DL_ANDROID} target="_blank" rel="noopener noreferrer">
+                <a
+                  className="dl"
+                  href={DL_ANDROID}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
                   ダウンロード <span className="arw">→</span>
                 </a>
               </div>
             </div>
             <div className="t">
               <div className="ic">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <rect x="3" y="4" width="18" height="12" rx="2" />
                   <path d="M8 20h8M12 16v4" />
                 </svg>
               </div>
               <h3>デスクトップ端末</h3>
-              <p>PaSoRi を接続した常設レジ向け。ブラウザの Web UI キオスクとして起動します。</p>
+              <p>
+                PaSoRi を接続した常設レジ向け。ブラウザの Web UI
+                キオスクとして起動します。
+              </p>
               <div className="t-foot">
                 <span className="pill">Win / macOS / Linux</span>
-                <a className="dl" href={DL_DESKTOP} target="_blank" rel="noopener noreferrer">
+                <a
+                  className="dl"
+                  href={DL_DESKTOP}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
                   ダウンロード <span className="arw">→</span>
                 </a>
               </div>
             </div>
             <div className="t">
               <div className="ic">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <path d="M8 6l-5 6 5 6M16 6l5 6-5 6" />
                 </svg>
               </div>
               <h3>REST API</h3>
-              <p>相互認証・決済・返金・残高照会を JSON で。独自端末や基幹システムへ直接統合。</p>
+              <p>
+                相互認証・決済・返金・残高照会を JSON
+                で。独自端末や基幹システムへ直接統合。
+              </p>
               <div className="t-foot">
                 <span className="pill">/v1</span>
-                <a className="dl" href={GITHUB} target="_blank" rel="noopener noreferrer">
+                <a
+                  className="dl"
+                  href={GITHUB}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
                   GitHub <span className="arw">→</span>
                 </a>
               </div>
@@ -273,7 +403,8 @@ export default function Home() {
         <div className="wrap">
           <h2>導入をご検討ですか?</h2>
           <p>
-            Melon の導入・お見積りは、お問い合わせページからご相談ください。すでに加盟店の方は、ポータルからサインインできます。
+            Melon
+            の導入・お見積りは、お問い合わせページからご相談ください。すでに加盟店の方は、ポータルからサインインできます。
           </p>
           <div className="actions">
             <a className="btn btn-lineink" href={CONTACT}>
@@ -292,9 +423,16 @@ export default function Home() {
             <div className="col about">
               <a className="brand" href="#top">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/melon-logo.png" alt="" style={{ width: 28, height: 28, borderRadius: 8 }} /> Melon
+                <img
+                  src="/melon-logo.png"
+                  alt=""
+                  style={{ width: 28, height: 28, borderRadius: 8 }}
+                />{" "}
+                Melon
               </a>
-              <p>FeliCa IDi ベースのオンライン前払式支払手段プラットフォーム。</p>
+              <p>
+                FeliCa IDi ベースのオンライン前払式支払手段プラットフォーム。
+              </p>
             </div>
             <div className="col">
               <h4>プロダクト</h4>
@@ -319,11 +457,14 @@ export default function Home() {
                 Android 版ダウンロード
               </a>
             </div>
+            <div className="col">
+              <h4>規約</h4>
+              <Link href="/terms">利用規約</Link>
+              <Link href="/merchant-terms">加盟店規約</Link>
+            </div>
           </div>
           <div className="legal">
-            <span>
-              Melon は前払式支払手段(第三者型)の発行・管理基盤です。
-            </span>
+            <span>Melon は前払式支払手段(第三者型)の発行・管理基盤です。</span>
             <span>© 2026 KIRISHIKI Yudai</span>
           </div>
         </div>
