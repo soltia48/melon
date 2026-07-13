@@ -715,6 +715,9 @@ pub struct MerchantAuth {
     /// The store this API key is scoped to (NULL only for legacy keys predating
     /// the store backfill).
     pub store_id: Option<Uuid>,
+    /// Which key was presented. Audit lines name it, so a key that turns out to
+    /// have leaked can be traced to everything it did — and then revoked.
+    pub key_id: Uuid,
 }
 
 /// Store a store-scoped merchant API key (its SHA-256 hash), returning the key id.
@@ -841,7 +844,7 @@ pub async fn merchant_by_key_hash(
     key_hash: &str,
 ) -> Result<Option<MerchantAuth>, DbError> {
     let row = sqlx::query(
-        "SELECT m.id, m.status, k.store_id FROM merchant_api_keys k
+        "SELECT m.id, m.status, k.store_id, k.id AS key_id FROM merchant_api_keys k
            JOIN merchants m ON m.id = k.merchant_id
           WHERE k.key_hash = $1 AND k.revoked_at IS NULL",
     )
@@ -853,6 +856,7 @@ pub async fn merchant_by_key_hash(
             merchant_id: r.try_get("id")?,
             status: r.try_get("status")?,
             store_id: r.try_get("store_id")?,
+            key_id: r.try_get("key_id")?,
         })),
         None => Ok(None),
     }

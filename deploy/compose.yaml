@@ -97,7 +97,17 @@ services:
       MELON_DEFAULT_CREDIT_LIMIT: ${MELON_DEFAULT_CREDIT_LIMIT:-0}
       FELICA_SESSION_TTL: ${FELICA_SESSION_TTL:-300}
       FELICA_MAX_SESSIONS: ${FELICA_MAX_SESSIONS:-1024}
+
+      # Logging. JSON here because these lines are collected by the container
+      # runtime and read by machines; `text` is for a terminal. Keep
+      # melon::request enabled whatever else you filter — it emits nothing itself,
+      # it is what puts request_id on every audit and security line.
       RUST_LOG: ${RUST_LOG:-info}
+      MELON_LOG_FORMAT: ${MELON_LOG_FORMAT:-json}
+      # Only cloudflared can reach the server (it is not published), so its
+      # CF-Connecting-IP is the real client and safe to trust. Without this every
+      # sign-in attempt is logged as coming from the tunnel.
+      MELON_TRUST_PROXY: "true"
 
       # Cloudflare Turnstile on the sign-in form. OPTIONAL: the challenge turns on
       # only when BOTH the (public) site key below and a non-empty secret file are

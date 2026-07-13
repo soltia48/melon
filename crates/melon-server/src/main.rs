@@ -3,18 +3,12 @@
 use std::sync::Arc;
 use std::{collections::HashSet, process::ExitCode};
 
-use tracing_subscriber::EnvFilter;
-
 use melon_auth::{KeyStore, SessionManager};
-use melon_server::{AppState, Config, router, spawn_expiry_sweeper};
+use melon_server::{AppState, Config, logging, router, spawn_expiry_sweeper};
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .init();
+    logging::init();
 
     let config = match Config::from_env() {
         Ok(c) => c,
@@ -34,6 +28,27 @@ async fn main() -> ExitCode {
 }
 
 async fn run(config: Config) -> Result<(), String> {
+    // A summary of what this process actually decided, so a misconfiguration is
+    // visible in the log rather than in the symptom. Secrets are not in here.
+    tracing::info!(
+        bind = %config.bind_addr,
+        cookie_secure = config.cookie_secure,
+        trust_proxy = config.trust_proxy,
+        log_card_ids = config.log_card_ids,
+        turnstile = config.turnstile.is_some(),
+        sweep_interval_secs = config.sweep_interval.as_secs(),
+        session_ttl_secs = config.session_ttl.as_secs(),
+        user_session_ttl_secs = config.user_session_ttl.as_secs(),
+        default_fee_bps = config.default_fee_bps,
+        default_credit_limit = config.default_credit_limit,
+        "starting melon-server"
+    );
+    if config.log_card_ids {
+        tracing::warn!(
+            "MELON_LOG_CARD_IDS is on — card identities will be written to the log at DEBUG"
+        );
+    }
+
     let pool = melon_db::connect(&config.database_url)
         .await
         .map_err(|e| format!("database connection failed: {e}"))?;
@@ -76,6 +91,8 @@ async fn run(config: Config) -> Result<(), String> {
         default_fee_bps: config.default_fee_bps,
         default_credit_limit: config.default_credit_limit,
         turnstile,
+        trust_proxy: config.trust_proxy,
+        log_card_ids: config.log_card_ids,
     };
     spawn_expiry_sweeper(state.clone(), config.sweep_interval);
     melon_server::spawn_session_reaper(state.clone());

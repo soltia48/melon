@@ -18,9 +18,40 @@
 | `MELON_TURNSTILE_SECRET` | — | 同**シークレットキー**(秘匿)。サーバーが siteverify でトークンを検証する |
 | `FELICA_SESSION_TTL` | `300` | 認証セッションのアイドル TTL(秒) |
 | `FELICA_MAX_SESSIONS` | `1024` | 同時セッション上限 |
-| `RUST_LOG` | `info` | ログレベル(tracing) |
+| `RUST_LOG` | `info` | ログのレベル/ターゲットフィルタ(tracing) |
+| `MELON_LOG_FORMAT` | `text` | `text`(人間可読) / `json`(1 行 1 JSON)。`deploy/compose.yaml` は `json` |
+| `MELON_TRUST_PROXY` | `false` | `CF-Connecting-IP` / `X-Forwarded-For` をクライアント IP として信用する。**プロキシ(cloudflared)が確実に前段に居る場合のみ** |
+| `MELON_LOG_CARD_IDS` | `false` | カード識別情報を DEBUG でログに出す(既定は出さない) |
 
 > ⚠️ `MELON_DEFAULT_CREDIT_LIMIT` が 0 の場合、与信限度未設定の加盟店は topup を売れません(最初の topup で精算残高がマイナスになり拒否)。加盟店ごとに与信限度を設定するか、この既定値を設定してください。
+
+### ログ
+
+すべて **stdout** に出力し、コンテナランタイム(`deploy/compose.yaml` は `json-file`, 10MB × 5 世代)が回収します。**ターゲット**で 4 系統に分かれており、`RUST_LOG` で個別に絞れます。
+
+| ターゲット | レベル | 内容 |
+|---|---|---|
+| `melon::audit` | INFO | **金銭移動と特権操作**。支払い・チャージ・返金・取消・各種調整・加盟店/店舗/API キーの変更 |
+| `melon::security` | INFO / WARN | サインインの成否、API キー拒否、認可拒否、パスワード変更、API キー発行/失効、ユーザー作成・状態変更 |
+| `melon::access` | INFO | 1 リクエスト 1 行(method / path / status / latency_ms)。`/healthz` は DEBUG |
+| `melon::request` | — | **出力なし**。`request_id` / `method` / `path` / `ip` を他の全行に付与する span |
+
+```bash
+RUST_LOG=info                                                            # 既定: 全部
+RUST_LOG=warn,melon::request=info,melon::audit=info,melon::security=info # 金銭+認証のみ(アクセスログを落とす)
+```
+
+> ⚠️ `melon::request` は必ず有効のままにしてください。この span 自体は 1 行も出力しませんが、これを切ると**監査行から `request_id` が消え**、リクエストとの突き合わせができなくなります。
+
+**監査ログ(`melon::audit`)** — 台帳が真実の源であることは変わりませんが、「誰が・いつ・いくら」をログ側からも再構成できます。各行は `event` / `transaction_id` / `merchant_id` / `store_id` / `actor_kind`(`api_key` or `user`) / `actor_id` / 金額 / `replayed` を持ちます。
+**`replayed=true` は冪等キーによる再送**(記帳は 1 回だけ)を意味します。これがあるおかげで「二重課金」と「2 回叩かれたが 1 回しか記帳していない」を区別できます。
+
+**ログに出さないもの** — FeliCa 鍵、加盟店 API キーの生値(未知キーの拒否時は**ハッシュ先頭 8 文字**のみ)、セッショントークン、パスワードとそのハッシュ、Turnstile シークレットとトークン、相互認証の生フレーム。
+**カード識別情報 `(system_code, idm, idi)` も既定では出しません**。監査行の `transaction_id` から DB 側で口座に辿れるため、追跡性を落とさずにログを「個人データを含まない業務ログ」に保てます。現場調査が必要なときだけ `MELON_LOG_CARD_IDS=true` で DEBUG に出ます。
+
+**リクエスト ID** — 受信した `X-Request-Id` があれば引き継ぎ、無ければ採番して**レスポンスヘッダに必ず返します**。加盟店から「この取引が失敗した」と言われたら、この ID 一つでそのリクエストの全ログを引けます。
+
+**クライアント IP** — cloudflared 越しなので、`MELON_TRUST_PROXY=true` のときだけ `CF-Connecting-IP` を採用します。既定が off なのは、サーバーに直接到達できる者がヘッダを偽装して他人の IP に失敗ログインを擦り付けられるためです。
 
 ### Cloudflare Turnstile(サインインの bot 対策)
 

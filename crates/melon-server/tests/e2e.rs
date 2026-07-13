@@ -88,6 +88,8 @@ fn build_app(pool: PgPool) -> Router {
         default_fee_bps: 0,
         default_credit_limit: 10_000_000,
         turnstile: None,
+        trust_proxy: false,
+        log_card_ids: false,
     };
     router(state)
 }
@@ -739,4 +741,223 @@ async fn security_headers_are_set_on_every_response(pool: PgPool) {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(resp.headers().get("x-frame-options").unwrap(), "DENY");
+}
+
+// ----- logging -----
+
+// Capturing the log in a test binary is trickier than it looks: tracing caches,
+// globally and per call site, whether *anyone* is interested in a span or event.
+// A subscriber installed only on this thread (`set_default`) loses that race
+// against the tests running in parallel with no subscriber at all, and spans go
+// missing — nondeterministically.
+//
+// So: one subscriber for the whole binary, installed once, whose writer routes
+// each line to the buffer belonging to the thread that emitted it. Tests that did
+// not ask to capture have no buffer, and their output is dropped.
+thread_local! {
+    static CAPTURE: std::cell::RefCell<Option<Arc<std::sync::Mutex<Vec<u8>>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[derive(Clone, Copy)]
+struct ThreadWriter;
+
+impl std::io::Write for ThreadWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        CAPTURE.with(|slot| {
+            if let Some(sink) = slot.borrow().as_ref() {
+                sink.lock().unwrap().extend_from_slice(buf);
+            }
+        });
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for ThreadWriter {
+    type Writer = ThreadWriter;
+    fn make_writer(&'a self) -> Self::Writer {
+        *self
+    }
+}
+
+/// The log this test produced.
+struct Logs(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl Logs {
+    fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+    /// The captured lines belonging to one target, parsed as JSON.
+    fn events(&self, target: &str) -> Vec<Value> {
+        self.text()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|v| v["target"] == target)
+            .collect()
+    }
+}
+
+/// Start capturing this thread's log output as JSON — the same format the server
+/// emits in production (`MELON_LOG_FORMAT=json`).
+fn capture_logs() -> Logs {
+    static INSTALL: std::sync::Once = std::sync::Once::new();
+    INSTALL.call_once(|| {
+        tracing_subscriber::fmt()
+            .json()
+            .flatten_event(true)
+            .with_writer(ThreadWriter)
+            .with_max_level(tracing::Level::INFO)
+            .init();
+    });
+    let sink = Arc::new(std::sync::Mutex::new(Vec::new()));
+    CAPTURE.with(|slot| *slot.borrow_mut() = Some(Arc::clone(&sink)));
+    Logs(sink)
+}
+
+/// The audit stream has to be able to answer "who charged what, when" — and must
+/// do it without ever writing down a secret or a card identity.
+#[sqlx::test(migrations = "../melon-db/migrations")]
+async fn the_audit_log_records_money_without_leaking_secrets(pool: PgPool) {
+    let logs = capture_logs();
+
+    let app = build_app(pool.clone());
+    let admin = sign_in_admin(&app, &pool).await;
+    let (_, v) = send(
+        &app,
+        "POST",
+        "/v1/merchants",
+        Some(&admin),
+        None,
+        json!({ "code": "shop-log", "name": "Log Shop" }),
+    )
+    .await;
+    let merchant_key = v["api_key"].as_str().unwrap().to_string();
+
+    let (session, _) = authenticate(&app, &merchant_key).await;
+    send(
+        &app,
+        "POST",
+        "/v1/topups",
+        Some(&merchant_key),
+        Some("topup-log"),
+        json!({ "session_id": session, "amount": 1000 }),
+    )
+    .await;
+
+    let (session, _) = authenticate(&app, &merchant_key).await;
+    let (status, v) = send(
+        &app,
+        "POST",
+        "/v1/payments",
+        Some(&merchant_key),
+        Some("pay-log"),
+        json!({ "session_id": session, "amount": 400, "note": "coffee" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "payment: {v}");
+    let transaction_id = v["transaction_id"].as_str().unwrap().to_string();
+
+    // Retrying with the same idempotency key books nothing new — and the audit log
+    // has to say so, or "charged twice" and "asked twice, charged once" look alike.
+    // A retry needs a fresh tap: the session's spend capability is one-shot, so a
+    // terminal re-sending after a timeout re-authenticates the card first.
+    let (session, _) = authenticate(&app, &merchant_key).await;
+    let (status, replay) = send(
+        &app,
+        "POST",
+        "/v1/payments",
+        Some(&merchant_key),
+        Some("pay-log"),
+        json!({ "session_id": session, "amount": 400, "note": "coffee" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "replay: {replay}");
+    assert_eq!(replay["replayed"], true, "the retry must not book twice");
+
+    let audit = logs.events("melon::audit");
+    let payments: Vec<&Value> = audit.iter().filter(|e| e["event"] == "payment").collect();
+    assert_eq!(payments.len(), 2, "one audit line per attempt: {audit:#?}");
+    assert_eq!(payments[0]["transaction_id"], transaction_id);
+    assert_eq!(payments[0]["amount"], 400);
+    assert_eq!(payments[0]["replayed"], false);
+    assert_eq!(payments[1]["replayed"], true, "the retry must be marked");
+    // The actor: this was the terminal's API key, not a person.
+    assert_eq!(payments[0]["actor_kind"], "api_key");
+    assert!(payments[0]["actor_id"].is_string());
+    // Every line inherits the request span, so one id pulls up the whole request.
+    assert!(
+        payments[0]["span"]["request_id"].is_string(),
+        "{:#?}",
+        payments[0]
+    );
+
+    assert_eq!(
+        audit.iter().filter(|e| e["event"] == "top_up").count(),
+        1,
+        "the top-up is audited too"
+    );
+
+    // The whole point: none of this may ever be in a log.
+    let text = logs.text();
+    assert!(
+        !text.contains(&merchant_key),
+        "the API key leaked into the log"
+    );
+    assert!(
+        !text.contains(&hex::encode(ISSUE_ID)),
+        "the card's IDi leaked into the log"
+    );
+    assert!(
+        !text.contains(&hex::encode(IDM)),
+        "the card's IDm leaked into the log"
+    );
+    assert!(
+        !text.contains(&admin.replace("session:", "")),
+        "the session token leaked into the log"
+    );
+    assert!(
+        !text.contains(ADMIN_PASSWORD),
+        "a password leaked into the log"
+    );
+}
+
+/// A caller's request id is adopted and echoed, so one id ties the client's record
+/// of a call to ours. Without one, an inbound id is minted.
+#[sqlx::test(migrations = "../melon-db/migrations")]
+async fn every_response_carries_a_request_id(pool: PgPool) {
+    let app = build_app(pool);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .header("x-request-id", "caller-supplied-id")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.headers().get("x-request-id").unwrap(),
+        "caller-supplied-id"
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let minted = resp
+        .headers()
+        .get("x-request-id")
+        .expect("a request id is minted");
+    assert!(!minted.is_empty());
 }

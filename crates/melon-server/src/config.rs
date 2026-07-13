@@ -1,4 +1,8 @@
 //! Server configuration from the environment.
+//!
+//! `MELON_LOG_FORMAT` and `RUST_LOG` are deliberately **not** here: the subscriber
+//! has to be installed before this module runs, or a configuration error would
+//! have nowhere to go. See [`crate::logging::init`].
 
 use std::time::Duration;
 
@@ -27,6 +31,14 @@ pub struct Config {
     /// Cloudflare Turnstile `(site_key, secret)` for login bot-protection.
     /// Enabled only when both are provided.
     pub turnstile: Option<(String, String)>,
+    /// Trust `CF-Connecting-IP` / `X-Forwarded-For` for the client's IP. Only
+    /// enable when a proxy we control (cloudflared) really is in front — the
+    /// headers are forgeable by anyone who can reach the server directly.
+    pub trust_proxy: bool,
+    /// Include the card identity `(system_code, idm, idi)` in DEBUG logs. Off by
+    /// default: `transaction_id` is enough to reach the account in the database,
+    /// so the log stream stays free of personal data.
+    pub log_card_ids: bool,
 }
 
 impl Config {
@@ -82,6 +94,8 @@ impl Config {
             default_fee_bps: parse_u64("MELON_DEFAULT_FEE_BPS", 0).min(10000) as i32,
             default_credit_limit: parse_u64("MELON_DEFAULT_CREDIT_LIMIT", 0) as i64,
             turnstile,
+            trust_proxy: parse_bool("MELON_TRUST_PROXY"),
+            log_card_ids: parse_bool("MELON_LOG_CARD_IDS"),
         })
     }
 }
@@ -114,6 +128,13 @@ fn env_secret(key: &str) -> Option<String> {
         .map_err(|e| tracing::error!(%path, error = %e, "failed to read secret file"))
         .ok()?;
     Some(value.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+/// An opt-in flag: absent or anything unrecognized means off.
+fn parse_bool(key: &str) -> bool {
+    std::env::var(key)
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "yes"))
+        .unwrap_or(false)
 }
 
 fn parse_u64(key: &str, default: u64) -> u64 {

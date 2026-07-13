@@ -122,6 +122,36 @@ pub struct AuthedMerchant {
     /// user's store (`None` for a merchant-wide admin). Payments/top-ups are
     /// attributed to it; listings are filtered by it when set.
     pub store_id: Option<Uuid>,
+    /// Which credential acted. Audit lines record it: "the merchant charged ¥500"
+    /// is not an answer when the question is which terminal, or which member of
+    /// staff, did it.
+    pub actor: Actor,
+}
+
+/// The credential behind a request, as recorded in the audit log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Actor {
+    /// A terminal, holding a store-scoped API key.
+    ApiKey(Uuid),
+    /// A person, signed in with email + password.
+    User(Uuid),
+}
+
+impl Actor {
+    /// `api_key` or `user` — the audit log's `actor_kind`.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Actor::ApiKey(_) => "api_key",
+            Actor::User(_) => "user",
+        }
+    }
+
+    /// The key id or the user id — the audit log's `actor_id`.
+    pub fn id(&self) -> Uuid {
+        match self {
+            Actor::ApiKey(id) | Actor::User(id) => *id,
+        }
+    }
 }
 
 impl FromRequestParts<AppState> for AuthUser {
@@ -174,26 +204,46 @@ impl FromRequestParts<AppState> for AuthedMerchant {
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
         // Machine credential first: the terminal always sends a bearer API key.
         if let Some(token) = bearer_token(parts) {
-            let merchant = melon_db::ops::merchant_by_key_hash(&state.pool, &sha256_hex(&token))
-                .await?
-                .ok_or_else(|| ApiError::unauthorized("invalid api key"))?;
+            let key_hash = sha256_hex(&token);
+            let merchant = match melon_db::ops::merchant_by_key_hash(&state.pool, &key_hash).await?
+            {
+                Some(m) => m,
+                None => {
+                    // The key itself must never reach the log. The first bytes of
+                    // its *hash* are enough to tell repeated attempts with one bad
+                    // key apart from a scan through many, and reveal nothing.
+                    crate::security!(
+                        key_hash_prefix = &key_hash[..8],
+                        "api key rejected: unknown key"
+                    );
+                    return Err(ApiError::unauthorized("invalid api key"));
+                }
+            };
             if merchant.status != "active" {
+                crate::security!(
+                    merchant_id = %merchant.merchant_id,
+                    key_id = %merchant.key_id,
+                    status = %merchant.status,
+                    "api key rejected: merchant is not active"
+                );
                 return Err(ApiError::forbidden("merchant is not active"));
             }
             return Ok(AuthedMerchant {
                 merchant_id: merchant.merchant_id,
                 store_id: merchant.store_id,
+                actor: Actor::ApiKey(merchant.key_id),
             });
         }
         // Otherwise a signed-in merchant staff user (the portal).
         let MerchantUser {
+            user,
             merchant_id,
             store_id,
-            ..
         } = MerchantUser::from_request_parts(parts, state).await?;
         Ok(AuthedMerchant {
             merchant_id,
             store_id,
+            actor: Actor::User(user.id),
         })
     }
 }

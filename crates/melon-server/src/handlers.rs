@@ -33,6 +33,21 @@ fn now() -> Timestamp {
     Timestamp::now()
 }
 
+/// The card identity — logged at DEBUG, and only when `MELON_LOG_CARD_IDS` asks
+/// for it. The audit stream identifies a movement by `transaction_id`, from which
+/// the account is one query away, so the default is to keep personal data out of
+/// the log entirely. See [`crate::logging`].
+fn log_card(state: &AppState, account: AccountKey) {
+    if state.log_card_ids {
+        tracing::debug!(
+            system_code = format_args!("0x{:04x}", account.system_code),
+            idm = %account.idm.to_hex(),
+            idi = %account.idi.to_hex(),
+            "card identity"
+        );
+    }
+}
+
 fn idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
     headers
         .get("Idempotency-Key")
@@ -151,17 +166,6 @@ pub async fn auth_config(State(state): State<AppState>) -> Json<AuthConfigResp> 
     })
 }
 
-/// The caller's IP as seen behind Cloudflare (or a reverse proxy), for the
-/// optional `remoteip` field of Turnstile's siteverify.
-fn client_ip(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("cf-connecting-ip")
-        .or_else(|| headers.get("x-forwarded-for"))
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
-        .filter(|s| !s.is_empty())
-}
-
 /// Verify a Turnstile token against Cloudflare's siteverify. Returns an error the
 /// sign-in handler surfaces (and the frontend resets the widget on).
 async fn verify_turnstile(
@@ -197,12 +201,20 @@ async fn verify_turnstile(
     };
     match outcome {
         Ok(v) if v.success => Ok(()),
-        Ok(_) => Err(ApiError::new(
-            StatusCode::FORBIDDEN,
-            "TURNSTILE_FAILED",
-            "bot verification failed — please try again",
-        )),
-        Err(_) => Err(ApiError::internal("bot verification is unavailable")),
+        Ok(_) => {
+            crate::security!("turnstile rejected the sign-in attempt");
+            Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "TURNSTILE_FAILED",
+                "bot verification failed — please try again",
+            ))
+        }
+        Err(e) => {
+            // Cloudflare being unreachable makes sign-in impossible; that needs to
+            // be loud and distinguishable from a user failing the challenge.
+            tracing::error!(error = %e, "turnstile siteverify is unavailable");
+            Err(ApiError::internal("bot verification is unavailable"))
+        }
     }
 }
 
@@ -213,14 +225,17 @@ pub async fn login(
     headers: HeaderMap,
     Json(req): Json<LoginReq>,
 ) -> Result<Response, ApiError> {
+    let email = req.email.trim();
+    let ip = crate::logging::client_ip(&headers, state.trust_proxy);
+
     // Gate the whole attempt behind Turnstile (when configured) before touching
     // the database, so login can't be used as a bot-driven password oracle.
     if let Some(ts) = &state.turnstile {
         let token = req.turnstile_token.as_deref().unwrap_or("");
-        verify_turnstile(ts, token, client_ip(&headers).as_deref()).await?;
+        verify_turnstile(ts, token, ip.as_deref()).await?;
     }
 
-    let found = melon_db::users::user_for_login(&state.pool, req.email.trim()).await?;
+    let found = melon_db::users::user_for_login(&state.pool, email).await?;
 
     // Verify a hash even when the user is unknown, so a wrong email and a wrong
     // password take the same time (no user enumeration by timing).
@@ -231,8 +246,25 @@ pub async fn login(
     let password_ok = crate::auth::verify_password(&req.password, &hash);
     let user = match (user, password_ok) {
         (Some(u), true) if u.status == "active" => u,
-        _ => return Err(ApiError::unauthorized("invalid email or password")),
+        // The response deliberately cannot tell these apart (no user enumeration),
+        // but the log must: a locked-out account and a brute-force sweep look the
+        // same from outside and need different responses from us.
+        (user, ok) => {
+            let reason = match (&user, ok) {
+                (None, _) => "unknown email",
+                (Some(_), false) => "wrong password",
+                (Some(_), true) => "account is not active",
+            };
+            crate::security!(email, reason, "sign-in failed");
+            return Err(ApiError::unauthorized("invalid email or password"));
+        }
     };
+    crate::security_info!(
+        user_id = %user.id,
+        email = %user.email,
+        role = %user.role,
+        "signed in"
+    );
 
     let token = crate::auth::new_secret();
     let expires_at =
@@ -308,11 +340,13 @@ pub async fn change_password(
         .await?
         .ok_or_else(|| ApiError::unauthorized("user not found"))?;
     if !crate::auth::verify_password(&req.current_password, &current) {
+        crate::security!(user_id = %user.id, "password change refused: wrong current password");
         return Err(ApiError::unauthorized("current password is incorrect"));
     }
     crate::auth::validate_password(&req.new_password)?;
     let hash = crate::auth::hash_password(&req.new_password)?;
     melon_db::users::set_password_hash(&state.pool, user.id, &hash).await?;
+    crate::security_info!(user_id = %user.id, "password changed");
 
     let mut response = Json(serde_json::json!({ "ok": true })).into_response();
     response.headers_mut().insert(
@@ -366,7 +400,7 @@ pub async fn admin_list_users(
 /// Issuer: create an admin user, or a merchant staff user for any merchant.
 pub async fn admin_create_user(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    AdminUser(admin): AdminUser,
     Json(req): Json<CreateUserReq>,
 ) -> Result<(StatusCode, Json<UserView>), ApiError> {
     let role = req.role.as_deref().unwrap_or("merchant");
@@ -380,7 +414,7 @@ pub async fn admin_create_user(
         };
     // A store scope is only meaningful for a merchant user.
     let store_id = if role == "admin" { None } else { req.store_id };
-    let user = create_user_checked(&state, &req, role, merchant_id, store_id).await?;
+    let user = create_user_checked(&state, &req, role, merchant_id, store_id, admin.id).await?;
     Ok((StatusCode::CREATED, Json(user)))
 }
 
@@ -396,6 +430,12 @@ pub async fn admin_set_user_status(
         return Err(ApiError::bad_request("you cannot disable your own account"));
     }
     melon_db::users::set_user_status(&state.pool, user_id, &req.status).await?;
+    crate::security_info!(
+        user_id = %user_id,
+        status = %req.status,
+        actor_id = %admin.id,
+        "user status changed"
+    );
     Ok(Json(
         serde_json::json!({ "user_id": user_id, "status": req.status }),
     ))
@@ -409,13 +449,18 @@ pub struct ResetPasswordReq {
 /// Issuer: reset any user's password (revokes their sessions).
 pub async fn admin_reset_password(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    AdminUser(admin): AdminUser,
     Path(user_id): Path<Uuid>,
     Json(req): Json<ResetPasswordReq>,
 ) -> Result<Json<Value>, ApiError> {
     crate::auth::validate_password(&req.new_password)?;
     let hash = crate::auth::hash_password(&req.new_password)?;
     melon_db::users::set_password_hash(&state.pool, user_id, &hash).await?;
+    crate::security_info!(
+        user_id = %user_id,
+        actor_id = %admin.id,
+        "password reset by an issuer admin (sessions revoked)"
+    );
     Ok(Json(serde_json::json!({ "user_id": user_id, "ok": true })))
 }
 
@@ -446,6 +491,7 @@ pub async fn create_merchant_user(
         "merchant",
         Some(caller.merchant_id),
         req.store_id,
+        caller.user.id,
     )
     .await?;
     Ok((StatusCode::CREATED, Json(user)))
@@ -471,6 +517,12 @@ pub async fn set_merchant_user_status(
         return Err(ApiError::not_found("user not found"));
     }
     melon_db::users::set_user_status(&state.pool, user_id, &req.status).await?;
+    crate::security_info!(
+        user_id = %user_id,
+        status = %req.status,
+        actor_id = %caller.user.id,
+        "user status changed"
+    );
     Ok(Json(
         serde_json::json!({ "user_id": user_id, "status": req.status }),
     ))
@@ -494,6 +546,7 @@ async fn create_user_checked(
     role: &str,
     merchant_id: Option<Uuid>,
     store_id: Option<Uuid>,
+    actor_id: Uuid,
 ) -> Result<UserView, ApiError> {
     let email = req.email.trim();
     if email.is_empty() || !email.contains('@') {
@@ -527,6 +580,15 @@ async fn create_user_checked(
         store_id,
     )
     .await?;
+    crate::security_info!(
+        user_id = %user.id,
+        email = %user.email,
+        role,
+        merchant_id = merchant_id.map(|m| m.to_string()),
+        store_id = store_id.map(|s| s.to_string()),
+        actor_id = %actor_id,
+        "user created"
+    );
     Ok(user_view(user))
 }
 
@@ -752,6 +814,20 @@ pub async fn topup(
         &state.tz,
     )
     .await?;
+    log_card(&state, account);
+    crate::audit!(
+        event = "top_up",
+        transaction_id = %out.transaction_id,
+        merchant_id = %merchant.merchant_id,
+        store_id = merchant.store_id.map(|s| s.to_string()),
+        actor_kind = merchant.actor.kind(),
+        actor_id = %merchant.actor.id(),
+        amount = out.amount.as_i64(),
+        balance = out.balance.as_i64(),
+        expires_at = %out.expires_at,
+        replayed = out.replayed,
+        "top-up issued"
+    );
     Ok((
         StatusCode::CREATED,
         Json(TopupResp {
@@ -830,6 +906,22 @@ pub async fn pay(
         now(),
     )
     .await?;
+    log_card(&state, account);
+    crate::audit!(
+        event = "payment",
+        transaction_id = %out.transaction_id,
+        merchant_id = %merchant.merchant_id,
+        store_id = merchant.store_id.map(|s| s.to_string()),
+        actor_kind = merchant.actor.kind(),
+        actor_id = %merchant.actor.id(),
+        amount = out.amount.as_i64(),
+        fee = out.fee.as_i64(),
+        balance = out.balance.as_i64(),
+        // A retried request that was already booked. Without this field you cannot
+        // tell "charged twice" from "asked twice, charged once".
+        replayed = out.replayed,
+        "payment settled"
+    );
     Ok((StatusCode::CREATED, Json(payment_response(out))))
 }
 
@@ -870,6 +962,30 @@ pub struct RefundResp {
     pub replayed: bool,
 }
 
+/// Audit a refund or a void. Both restore money to the buckets the payment drew
+/// from, and both are reachable by a merchant *and* by an admin, so all four paths
+/// log the same shape.
+fn audit_refund(
+    event: &'static str,
+    out: &ops::Refund,
+    merchant_id: Option<Uuid>,
+    actor_kind: &'static str,
+    actor_id: Uuid,
+) {
+    crate::audit!(
+        event,
+        transaction_id = %out.transaction_id,
+        payment_id = %out.payment_txn_id,
+        merchant_id = merchant_id.map(|m| m.to_string()),
+        actor_kind,
+        actor_id = %actor_id,
+        amount = out.amount.as_i64(),
+        balance = out.balance.as_i64(),
+        replayed = out.replayed,
+        "{event} booked"
+    );
+}
+
 fn refund_response(out: ops::Refund) -> RefundResp {
     RefundResp {
         transaction_id: out.transaction_id,
@@ -898,6 +1014,13 @@ pub async fn refund(
     verify_payment_owner(&state, req.payment_id, merchant.merchant_id).await?;
     let amount = req.amount.map(positive).transpose()?;
     let out = ops::refund(&state.pool, req.payment_id, amount, &key, now()).await?;
+    audit_refund(
+        "refund",
+        &out,
+        Some(merchant.merchant_id),
+        merchant.actor.kind(),
+        merchant.actor.id(),
+    );
     Ok((StatusCode::CREATED, Json(refund_response(out))))
 }
 
@@ -910,6 +1033,13 @@ pub async fn void(
     let key = idempotency_key(&headers)?;
     verify_payment_owner(&state, payment_id, merchant.merchant_id).await?;
     let out = ops::void(&state.pool, payment_id, &key, now()).await?;
+    audit_refund(
+        "void",
+        &out,
+        Some(merchant.merchant_id),
+        merchant.actor.kind(),
+        merchant.actor.id(),
+    );
     Ok(Json(refund_response(out)))
 }
 
@@ -1210,7 +1340,7 @@ pub struct AdjustResp {
 
 pub async fn adjust_account(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    AdminUser(admin): AdminUser,
     Path((system_code, idm, idi)): Path<(String, String, String)>,
     Json(req): Json<AdjustReq>,
 ) -> Result<Json<AdjustResp>, ApiError> {
@@ -1228,6 +1358,18 @@ pub async fn adjust_account(
         &state.tz,
     )
     .await?;
+    // A hand-written change to someone's balance. If any line in this log is ever
+    // read in anger, it is this one — record who, how much, and why.
+    crate::audit!(
+        event = "account_adjust",
+        transaction_id = %out.transaction_id,
+        actor_kind = "user",
+        actor_id = %admin.id,
+        delta = out.delta.as_i64(),
+        balance = out.balance.as_i64(),
+        reason = reason.unwrap_or("-"),
+        "account balance adjusted"
+    );
     Ok(Json(AdjustResp {
         transaction_id: out.transaction_id,
         delta: out.delta.as_i64(),
@@ -1263,25 +1405,27 @@ pub async fn admin_refundable(
 /// Refund any payment (admin; no merchant-owner check).
 pub async fn admin_refund(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    AdminUser(admin): AdminUser,
     headers: HeaderMap,
     Json(req): Json<RefundReq>,
 ) -> Result<(StatusCode, Json<RefundResp>), ApiError> {
     let key = idempotency_key(&headers)?;
     let amount = req.amount.map(positive).transpose()?;
     let out = ops::refund(&state.pool, req.payment_id, amount, &key, now()).await?;
+    audit_refund("refund", &out, None, "user", admin.id);
     Ok((StatusCode::CREATED, Json(refund_response(out))))
 }
 
 /// Void (fully reverse) any payment (admin; no merchant-owner check).
 pub async fn admin_void(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    AdminUser(admin): AdminUser,
     headers: HeaderMap,
     Path(payment_id): Path<Uuid>,
 ) -> Result<Json<RefundResp>, ApiError> {
     let key = idempotency_key(&headers)?;
     let out = ops::void(&state.pool, payment_id, &key, now()).await?;
+    audit_refund("void", &out, None, "user", admin.id);
     Ok(Json(refund_response(out)))
 }
 
@@ -1339,7 +1483,7 @@ pub async fn admin_list_stores(
 
 pub async fn admin_create_store(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    AdminUser(admin): AdminUser,
     Path(merchant_id): Path<Uuid>,
     Json(req): Json<CreateStoreReq>,
 ) -> Result<(StatusCode, Json<StoreView>), ApiError> {
@@ -1352,6 +1496,15 @@ pub async fn admin_create_store(
     let store = ops::get_store(&state.pool, id)
         .await?
         .ok_or_else(|| ApiError::internal("store vanished after creation"))?;
+    crate::audit!(
+        event = "store_created",
+        store_id = %id,
+        merchant_id = %merchant_id,
+        actor_kind = "user",
+        actor_id = %admin.id,
+        code,
+        "store created"
+    );
     Ok((StatusCode::CREATED, Json(store_view(store))))
 }
 
@@ -1362,12 +1515,20 @@ pub struct StoreStatusReq {
 
 pub async fn admin_set_store_status(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    AdminUser(admin): AdminUser,
     Path(store_id): Path<Uuid>,
     Json(req): Json<StoreStatusReq>,
 ) -> Result<Json<Value>, ApiError> {
     validate_store_status(&req.status)?;
     ops::set_store_status(&state.pool, store_id, &req.status).await?;
+    crate::audit!(
+        event = "store_status",
+        store_id = %store_id,
+        actor_kind = "user",
+        actor_id = %admin.id,
+        status = %req.status,
+        "store status changed"
+    );
     Ok(Json(
         serde_json::json!({ "store_id": store_id, "status": req.status }),
     ))
@@ -1380,7 +1541,7 @@ pub struct StoreNameReq {
 
 pub async fn admin_update_store(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    AdminUser(admin): AdminUser,
     Path(store_id): Path<Uuid>,
     Json(req): Json<StoreNameReq>,
 ) -> Result<Json<Value>, ApiError> {
@@ -1389,6 +1550,13 @@ pub async fn admin_update_store(
         return Err(ApiError::bad_request("name is required"));
     }
     ops::update_store_name(&state.pool, store_id, name).await?;
+    crate::audit!(
+        event = "store_renamed",
+        store_id = %store_id,
+        actor_kind = "user",
+        actor_id = %admin.id,
+        "store renamed"
+    );
     Ok(Json(
         serde_json::json!({ "store_id": store_id, "name": name }),
     ))
@@ -1494,6 +1662,15 @@ pub async fn merchant_create_api_key(
         label,
     )
     .await?;
+    // The key id, never the secret — the secret is shown to the caller once and
+    // exists nowhere else in plaintext, including here.
+    crate::security_info!(
+        key_id = %id,
+        merchant_id = %caller.merchant_id,
+        store_id = %store_id,
+        actor_id = %caller.user.id,
+        "api key issued"
+    );
     Ok((
         StatusCode::CREATED,
         Json(CreateApiKeyResp {
@@ -1514,6 +1691,13 @@ pub async fn merchant_revoke_api_key(
     if !revoked {
         return Err(ApiError::not_found("api key not found"));
     }
+    crate::security_info!(
+        key_id = %key_id,
+        merchant_id = %caller.merchant_id,
+        store_id = %store_id,
+        actor_id = %caller.user.id,
+        "api key revoked"
+    );
     Ok(Json(
         serde_json::json!({ "key_id": key_id, "revoked": true }),
     ))
@@ -1597,7 +1781,7 @@ pub struct MerchantStatusReq {
 
 pub async fn set_merchant_status(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    AdminUser(admin): AdminUser,
     Path(merchant_id): Path<Uuid>,
     Json(req): Json<MerchantStatusReq>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -1607,6 +1791,14 @@ pub async fn set_merchant_status(
         ));
     }
     ops::set_merchant_status(&state.pool, merchant_id, &req.status).await?;
+    crate::audit!(
+        event = "merchant_status",
+        merchant_id = %merchant_id,
+        actor_kind = "user",
+        actor_id = %admin.id,
+        status = %req.status,
+        "merchant status changed"
+    );
     Ok(Json(
         serde_json::json!({ "merchant_id": merchant_id, "status": req.status }),
     ))
@@ -1633,12 +1825,20 @@ pub struct MerchantFeeReq {
 
 pub async fn set_merchant_fee(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    AdminUser(admin): AdminUser,
     Path(merchant_id): Path<Uuid>,
     Json(req): Json<MerchantFeeReq>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let fee_bps = validate_fee_bps(req.fee_bps)?;
     ops::set_merchant_fee(&state.pool, merchant_id, fee_bps).await?;
+    crate::audit!(
+        event = "merchant_fee",
+        merchant_id = %merchant_id,
+        actor_kind = "user",
+        actor_id = %admin.id,
+        fee_bps,
+        "merchant fee changed"
+    );
     Ok(Json(
         serde_json::json!({ "merchant_id": merchant_id, "fee_bps": fee_bps }),
     ))
@@ -1651,12 +1851,20 @@ pub struct MerchantCreditReq {
 
 pub async fn set_merchant_credit_limit(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    AdminUser(admin): AdminUser,
     Path(merchant_id): Path<Uuid>,
     Json(req): Json<MerchantCreditReq>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let credit_limit = validate_credit_limit(req.credit_limit)?;
     ops::set_merchant_credit_limit(&state.pool, merchant_id, credit_limit).await?;
+    crate::audit!(
+        event = "merchant_credit_limit",
+        merchant_id = %merchant_id,
+        actor_kind = "user",
+        actor_id = %admin.id,
+        credit_limit,
+        "merchant credit limit changed"
+    );
     Ok(Json(
         serde_json::json!({ "merchant_id": merchant_id, "credit_limit": credit_limit }),
     ))
@@ -1665,7 +1873,7 @@ pub async fn set_merchant_credit_limit(
 /// Rotate a merchant's API key: revoke the old one, return a fresh secret (once).
 pub async fn rotate_api_key(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    AdminUser(admin): AdminUser,
     Path(merchant_id): Path<Uuid>,
 ) -> Result<Json<CreateMerchantResp>, ApiError> {
     // Admin rotation targets the merchant's default store.
@@ -1681,6 +1889,13 @@ pub async fn rotate_api_key(
         Some("rotated"),
     )
     .await?;
+    // The secret is returned to the caller once and never logged.
+    crate::security_info!(
+        merchant_id = %merchant_id,
+        store_id = %store_id,
+        actor_id = %admin.id,
+        "merchant api key rotated (previous keys revoked)"
+    );
     Ok(Json(CreateMerchantResp {
         merchant_id,
         api_key: secret,
@@ -1689,7 +1904,7 @@ pub async fn rotate_api_key(
 
 pub async fn adjust_merchant(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    AdminUser(admin): AdminUser,
     Path(merchant_id): Path<Uuid>,
     Json(req): Json<MerchantAdjustReq>,
 ) -> Result<Json<MerchantAdjustResp>, ApiError> {
@@ -1704,6 +1919,17 @@ pub async fn adjust_merchant(
         reason,
     )
     .await?;
+    crate::audit!(
+        event = "merchant_adjust",
+        adjustment_id = %out.id,
+        merchant_id = %merchant_id,
+        actor_kind = "user",
+        actor_id = %admin.id,
+        delta = out.delta.as_i64(),
+        balance = out.balance.as_i64(),
+        reason = reason.unwrap_or("-"),
+        "merchant settlement adjusted"
+    );
     Ok(Json(MerchantAdjustResp {
         id: out.id,
         delta: out.delta.as_i64(),
@@ -1713,7 +1939,7 @@ pub async fn adjust_merchant(
 
 pub async fn create_merchant(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    AdminUser(admin): AdminUser,
     Json(req): Json<CreateMerchantReq>,
 ) -> Result<(StatusCode, Json<CreateMerchantResp>), ApiError> {
     let fee_bps = validate_fee_bps(req.fee_bps.unwrap_or(state.default_fee_bps))?;
@@ -1726,7 +1952,7 @@ pub async fn create_merchant(
         .await?
         .ok_or_else(|| ApiError::internal("default store missing after merchant creation"))?;
     let secret = crate::auth::new_secret();
-    ops::store_api_key(
+    let key_id = ops::store_api_key(
         &state.pool,
         merchant_id,
         store_id,
@@ -1734,6 +1960,18 @@ pub async fn create_merchant(
         Some("initial"),
     )
     .await?;
+    crate::audit!(
+        event = "merchant_created",
+        merchant_id = %merchant_id,
+        store_id = %store_id,
+        key_id = %key_id,
+        actor_kind = "user",
+        actor_id = %admin.id,
+        code = %req.code,
+        fee_bps,
+        credit_limit,
+        "merchant created"
+    );
     Ok((
         StatusCode::CREATED,
         Json(CreateMerchantResp {
@@ -1754,9 +1992,18 @@ pub struct SweepResp {
 
 pub async fn sweep(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    AdminUser(admin): AdminUser,
 ) -> Result<Json<SweepResp>, ApiError> {
     let out = ops::expire_due(&state.pool, now(), 500).await?;
+    crate::audit!(
+        event = "expiry_sweep",
+        actor_kind = "user",
+        actor_id = %admin.id,
+        ran = out.ran,
+        expired_buckets = out.expired_buckets,
+        expired_amount = out.expired_amount.as_i64(),
+        "expiry sweep run by hand"
+    );
     Ok(Json(SweepResp {
         ran: out.ran,
         expired_buckets: out.expired_buckets,
@@ -1848,7 +2095,7 @@ pub struct IssuerAdjustResp {
 
 pub async fn adjust_issuer(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    AdminUser(admin): AdminUser,
     Json(req): Json<AdjustReq>,
 ) -> Result<Json<IssuerAdjustResp>, ApiError> {
     if req.delta == 0 {
@@ -1857,6 +2104,16 @@ pub async fn adjust_issuer(
     let reason = req.reason.as_deref().filter(|s| !s.is_empty());
     let out =
         ops::adjust_issuer(&state.pool, melon_core::money::Yen::new(req.delta), reason).await?;
+    crate::audit!(
+        event = "issuer_adjust",
+        adjustment_id = %out.id,
+        actor_kind = "user",
+        actor_id = %admin.id,
+        delta = out.delta.as_i64(),
+        balance = out.balance.as_i64(),
+        reason = reason.unwrap_or("-"),
+        "issuer balance adjusted"
+    );
     Ok(Json(IssuerAdjustResp {
         id: out.id,
         delta: out.delta.as_i64(),

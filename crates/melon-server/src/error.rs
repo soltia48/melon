@@ -56,8 +56,21 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        // The request span supplies request_id / method / path, so these lines only
+        // have to say what went wrong. A rejected credential is a security event; a
+        // business refusal (insufficient funds, idempotency conflict) is worth an
+        // INFO line so the shape of the traffic is visible without a database query.
+        let status = self.status.as_u16();
         if self.status.is_server_error() {
-            tracing::error!(code = self.code, message = %self.message, "request failed");
+            tracing::error!(code = self.code, message = %self.message, status, "request failed");
+        } else if matches!(status, 401 | 403) {
+            tracing::warn!(
+                target: crate::logging::SECURITY,
+                code = self.code, message = %self.message, status,
+                "request denied"
+            );
+        } else if self.status.is_client_error() {
+            tracing::info!(code = self.code, message = %self.message, status, "request rejected");
         }
         let mut error = json!({ "code": self.code, "message": self.message });
         if let Some(details) = self.details {

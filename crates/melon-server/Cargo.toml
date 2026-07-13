@@ -45,3 +45,6 @@ axum.workspace = true
 tower.workspace = true
 serde_json.workspace = true
 http-body-util = "0.1"
+# The logging test captures the JSON log stream and asserts on it.
+tracing.workspace = true
+tracing-subscriber.workspace = true

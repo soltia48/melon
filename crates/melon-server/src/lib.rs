@@ -9,6 +9,7 @@ pub mod auth;
 pub mod config;
 pub mod error;
 pub mod handlers;
+pub mod logging;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -76,6 +77,10 @@ pub struct AppState {
     /// Cloudflare Turnstile for login bot-protection; `None` disables the
     /// challenge (login proceeds without it).
     pub turnstile: Option<Turnstile>,
+    /// Trust the proxy's client-IP headers (see [`logging::client_ip`]).
+    pub trust_proxy: bool,
+    /// Log the card identity at DEBUG (off by default; see [`logging`]).
+    pub log_card_ids: bool,
 }
 
 /// Cloudflare Turnstile configuration for the sign-in form. Present only when a
@@ -227,6 +232,12 @@ pub fn router(state: AppState) -> Router {
         .layer(middleware::from_fn_with_state(
             state.clone(),
             security_headers,
+        ))
+        // Outermost, so the status it logs is the one the client receives — and so
+        // the request span wraps every other layer's logs, including rejections.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            logging::request_context,
         ))
         .with_state(state)
 }
