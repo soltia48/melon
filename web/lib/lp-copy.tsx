@@ -100,11 +100,18 @@ export const LP_JA: LpCopy = {
   },
   hero: {
     eyebrow: "オンライン前払式支払手段プラットフォーム",
+    // Japanese wraps anywhere, so a narrow viewport would cut a phrase in half
+    // ("支払い / も、"). Each 文節 is its own box, so the only place a line can
+    // break is between them — see `.lp .hero h1 .ph` in globals.css.
     h1: (
       <>
-        かざすだけ。
+        <span className="ph">かざすだけ。</span>
         <br />
-        支払いも、チャージも、<span className="hl">一瞬</span>で。
+        <span className="ph">支払いも、</span>
+        <span className="ph">チャージも、</span>
+        <span className="ph">
+          <span className="hl">一瞬</span>で。
+        </span>
       </>
     ),
     lead: (

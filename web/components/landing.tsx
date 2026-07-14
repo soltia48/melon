@@ -36,7 +36,8 @@ export function Landing({ c }: { c: LpCopy }) {
         <div className="wrap">
           <a className="brand" href="#top">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/melon-logo.png" alt="" /> Melon
+            <img src="/melon-logo.png" alt="" />{" "}
+            <span className="wordmark">Melon</span>
           </a>
           <div className="links">
             <a href="#features">{c.nav.features}</a>

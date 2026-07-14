@@ -43,8 +43,13 @@ body {
   margin: 0;
 }
 body {
-  font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN",
-    Meiryo, sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    "Hiragino Kaku Gothic ProN",
+    Meiryo,
+    sans-serif;
   background: var(--bg);
   color: var(--text);
   font-size: 14px;
@@ -503,6 +508,10 @@ tr.clickable:hover td {
 .lp .nav .spacer {
   flex: 1;
 }
+.lp .nav .brand,
+.lp .nav .cta-min {
+  flex: none;
+}
 .lp .nav .cta-min {
   display: flex;
   gap: 10px;
@@ -511,6 +520,56 @@ tr.clickable:hover td {
 @media (max-width: 760px) {
   .lp .nav .links {
     display: none;
+  }
+}
+/* A phone has room for the brand, the language toggle and ONE call to action.
+   The secondary one goes: 「お問い合わせ」 is repeated in the hero and the footer,
+   whereas the portal link exists nowhere else in the nav. */
+@media (max-width: 560px) {
+  .lp .nav .wrap {
+    /* Buy back side padding: on a 320px phone every pixel counts. */
+    width: min(1080px, 100% - 24px);
+    gap: 10px;
+  }
+  .lp .nav .cta-min {
+    gap: 6px;
+  }
+  .lp .nav .cta-min .btn-ghost {
+    display: none;
+  }
+  .lp .nav .lang {
+    padding: 6px 7px;
+    font-size: 0.8rem;
+  }
+  .lp .nav .cta-min .btn-sm {
+    padding: 7px 11px;
+    font-size: 0.82rem;
+  }
+}
+/* Narrower than any phone but a folded Galaxy Fold. The logo still links home,
+   so the wordmark is what goes — dropping the language toggle or clipping the one
+   call to action would cost more. */
+@media (max-width: 319px) {
+  .lp .nav .brand .wordmark {
+    display: none;
+  }
+}
+@media (max-width: 380px) {
+  .lp .nav .brand {
+    font-size: 0.95rem;
+    gap: 7px;
+  }
+  .lp .nav .brand img {
+    width: 26px;
+    height: 26px;
+  }
+  .lp .nav .lang {
+    font-size: 0.78rem;
+    padding: 6px 4px;
+  }
+  .lp .nav .cta-min .btn-sm {
+    padding: 7px 10px;
+    font-size: 0.8rem;
   }
 }
 
@@ -522,11 +581,18 @@ tr.clickable:hover td {
   font-family: inherit;
   font-size: 0.94rem;
   font-weight: 700;
+  /* Never break a label across lines. Japanese wraps between almost any two
+     characters, so a squeezed button would otherwise stack its label vertically
+     rather than simply overflow — which is how the nav fell apart on a phone. */
+  white-space: nowrap;
   padding: 11px 18px;
   border-radius: 11px;
   cursor: pointer;
   border: 1px solid transparent;
-  transition: transform 0.12s ease, background 0.15s ease, border-color 0.15s ease;
+  transition:
+    transform 0.12s ease,
+    background 0.15s ease,
+    border-color 0.15s ease;
 }
 .lp .btn-primary {
   background: var(--accent);
@@ -573,13 +639,22 @@ tr.clickable:hover td {
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background-image: repeating-linear-gradient(
+  background-image:
+    repeating-linear-gradient(
       45deg,
       var(--lp-net) 0 1.2px,
       transparent 1.2px 24px
     ),
-    repeating-linear-gradient(-45deg, var(--lp-net) 0 1.2px, transparent 1.2px 24px);
-  -webkit-mask-image: radial-gradient(120% 90% at 72% 8%, #000 0%, transparent 62%);
+    repeating-linear-gradient(
+      -45deg,
+      var(--lp-net) 0 1.2px,
+      transparent 1.2px 24px
+    );
+  -webkit-mask-image: radial-gradient(
+    120% 90% at 72% 8%,
+    #000 0%,
+    transparent 62%
+  );
   mask-image: radial-gradient(120% 90% at 72% 8%, #000 0%, transparent 62%);
 }
 .lp .hero .wrap {
@@ -597,9 +672,23 @@ tr.clickable:hover td {
   letter-spacing: -0.025em;
   line-height: 1.1;
   margin: 16px 0 0;
+  /* The headline now only breaks between phrases (`.ph` below), and with so few
+     break points `balance` starts shuffling the lines around. Fill each line
+     instead — the phrases decide where the breaks are. */
+  text-wrap: normal;
 }
 .lp .hero h1 .hl {
   color: var(--accent);
+}
+/* One 文節 per span. Japanese permits a line break between almost any two
+   characters, so on a narrow viewport the headline would otherwise break inside a
+   phrase ("支払い / も、"). Making each phrase unbreakable leaves the boundaries
+   between them as the only break opportunities.
+   Deliberately NOT display:inline-block: an atomic box ends the text run, and the
+   browser then stops trimming the trailing space built into 「、」, which opens a
+   visible gap before the next phrase. */
+.lp .hero h1 .ph {
+  white-space: nowrap;
 }
 .lp .hero p.lead {
   font-size: 1.08rem;
@@ -715,7 +804,8 @@ tr.clickable:hover td {
   border: 1px solid var(--border);
   display: grid;
   place-items: center;
-  box-shadow: inset 0 0 0 6px color-mix(in srgb, var(--accent-weak) 70%, transparent);
+  box-shadow: inset 0 0 0 6px
+    color-mix(in srgb, var(--accent-weak) 70%, transparent);
 }
 .lp .card-hero .badge img {
   width: 104px;
@@ -897,7 +987,9 @@ tr.clickable:hover td {
   border-radius: 16px;
   padding: 26px;
   box-shadow: var(--shadow);
-  transition: transform 0.15s ease, border-color 0.15s ease;
+  transition:
+    transform 0.15s ease,
+    border-color 0.15s ease;
 }
 .lp .feature:hover {
   transform: translateY(-3px);
@@ -1056,7 +1148,8 @@ tr.clickable:hover td {
   inset: 0;
   opacity: 0.5;
   pointer-events: none;
-  background-image: repeating-linear-gradient(
+  background-image:
+    repeating-linear-gradient(
       45deg,
       rgba(255, 255, 255, 0.06) 0 1.2px,
       transparent 1.2px 24px
