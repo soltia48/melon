@@ -902,6 +902,69 @@ where
     })
 }
 
+/// Whether any account exists for this `(system_code, idi)`. Lets the
+/// self-service lookup tell "no melon account for this Suica ID" (404) apart from
+/// "account exists, balance is zero" (200). An IDi is unique within its system, so
+/// this matches at most one account.
+pub async fn account_exists_by_idi<'e, E>(
+    exec: E,
+    system_code: u16,
+    idi: Idi,
+) -> Result<bool, DbError>
+where
+    E: PgExecutor<'e>,
+{
+    let row = sqlx::query("SELECT 1 FROM accounts WHERE system_code = $1 AND idi = $2 LIMIT 1")
+        .bind(system_code as i32)
+        .bind(idi.as_bytes().as_slice())
+        .fetch_optional(exec)
+        .await?;
+    Ok(row.is_some())
+}
+
+/// Spendable balance for the account identified by `(system_code, idi)`. Used by
+/// the unauthenticated self-service lookup, where the cardholder supplies their
+/// own IDi (the string form of which is the "Suica ID" shown in wallet apps). An
+/// IDi is unique within its system, so this addresses one account's buckets.
+pub async fn balance_by_idi<'e, E>(
+    exec: E,
+    system_code: u16,
+    idi: Idi,
+    now: Timestamp,
+) -> Result<BalanceBreakdown, DbError>
+where
+    E: PgExecutor<'e>,
+{
+    let rows = sqlx::query(
+        "SELECT id, remaining_amount, expires_at
+           FROM topup_buckets
+          WHERE system_code = $1 AND idi = $2 AND status = 'active'
+            AND expires_at > $3 AND remaining_amount > 0
+          ORDER BY expires_at, topped_up_at, id",
+    )
+    .bind(system_code as i32)
+    .bind(idi.as_bytes().as_slice())
+    .bind(to_odt(now))
+    .fetch_all(exec)
+    .await?;
+
+    let mut buckets = Vec::with_capacity(rows.len());
+    let mut total = 0i64;
+    for row in rows {
+        let remaining: i64 = row.try_get("remaining_amount")?;
+        total = total.saturating_add(remaining);
+        buckets.push(BucketView {
+            bucket_id: row.try_get("id")?,
+            remaining: Yen::new(remaining),
+            expires_at: to_jiff(row.try_get("expires_at")?),
+        });
+    }
+    Ok(BalanceBreakdown {
+        total: Yen::new(total),
+        buckets,
+    })
+}
+
 async fn ensure_account(tx: &mut sqlx::PgConnection, account: AccountKey) -> Result<(), DbError> {
     sqlx::query(
         "INSERT INTO accounts (system_code, idm, idi) VALUES ($1, $2, $3)

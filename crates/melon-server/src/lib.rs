@@ -149,6 +149,8 @@ pub fn router(state: AppState) -> Router {
             post(handlers::mutual_authentication),
         )
         .route("/v1/balance", post(handlers::balance))
+        // Unauthenticated self-service balance, keyed on the semi-public IDm.
+        .route("/v1/self/balance", post(handlers::self_balance))
         .route("/v1/topups", post(handlers::topup))
         .route("/v1/payments", post(handlers::pay))
         .route("/v1/refunds", post(handlers::refund))

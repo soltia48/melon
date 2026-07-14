@@ -802,6 +802,53 @@ pub async fn balance(
     }))
 }
 
+// ----- self-service balance (unauthenticated, by the cardholder's own IDi) -----
+
+#[derive(Deserialize)]
+pub struct SelfBalanceReq {
+    /// The 2-byte System Code (`0x0003` for the Suica/transit-IC family).
+    pub system_code: u16,
+    /// The 16-hex-character IDi. Cardholders read the string form of this — the
+    /// "card ID" shown in transit-IC wallet apps (Suica, PASMO, …) — and the
+    /// client converts it back to hex.
+    pub idi: String,
+}
+
+/// The self-service balance view. Deliberately carries ONLY the spendable total
+/// and its expiry breakdown — never the raw IDi/IDm or any merchant linkage. Keep
+/// the payload to what the cardholder needs and nothing that identifies them
+/// further.
+#[derive(Serialize)]
+pub struct SelfBalanceResp {
+    pub system_code: u16,
+    pub total: i64,
+    pub buckets: Vec<BucketView>,
+}
+
+/// Unauthenticated self-service balance: a cardholder reads the spendable balance
+/// for their own card, identified by `(system_code, idi)` alone. There is no
+/// mutual authentication here — the caller simply asserts an IDi (its string form
+/// is the "card ID" the cardholder can read from their wallet app) — so this is a
+/// read-only, lower-trust path than the merchant/admin balance endpoints.
+///
+/// The IDi travels in the request body, never the URL, so it stays out of the
+/// access log (card identities are not logged by default).
+pub async fn self_balance(
+    State(state): State<AppState>,
+    Json(req): Json<SelfBalanceReq>,
+) -> Result<Json<SelfBalanceResp>, ApiError> {
+    let idi = parse_idi(&req.idi)?;
+    if !ops::account_exists_by_idi(&state.pool, req.system_code, idi).await? {
+        return Err(ApiError::not_found("no account for this card"));
+    }
+    let bal = ops::balance_by_idi(&state.pool, req.system_code, idi, now()).await?;
+    Ok(Json(SelfBalanceResp {
+        system_code: req.system_code,
+        total: bal.total.as_i64(),
+        buckets: bucket_views(bal),
+    }))
+}
+
 // ----- top-up -----
 
 #[derive(Deserialize)]

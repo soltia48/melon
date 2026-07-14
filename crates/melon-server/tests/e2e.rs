@@ -1023,3 +1023,90 @@ async fn a_card_with_a_randomized_idm_is_refused(pool: PgPool) {
     );
     assert_eq!(v["step"], "auth1");
 }
+
+#[sqlx::test(migrations = "../melon-db/migrations")]
+async fn a_cardholder_reads_their_own_balance_by_idi(pool: PgPool) {
+    let app = build_app(pool.clone());
+    let admin = sign_in_admin(&app, &pool).await;
+
+    // A merchant funds the card: top up ¥1000, pay ¥300 → ¥700 spendable.
+    let (_, v) = send(
+        &app,
+        "POST",
+        "/v1/merchants",
+        Some(&admin),
+        None,
+        json!({ "code": "shop-self", "name": "Self Shop" }),
+    )
+    .await;
+    let merchant_key = v["api_key"].as_str().unwrap().to_string();
+
+    let (session, _) = authenticate(&app, &merchant_key).await;
+    let (status, _) = send(
+        &app,
+        "POST",
+        "/v1/topups",
+        Some(&merchant_key),
+        Some("self-topup"),
+        json!({ "session_id": session, "amount": 1000 }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (session, _) = authenticate(&app, &merchant_key).await;
+    let (status, _) = send(
+        &app,
+        "POST",
+        "/v1/payments",
+        Some(&merchant_key),
+        Some("self-pay"),
+        json!({ "session_id": session, "amount": 300 }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // The cardholder reads their Suica ID from their wallet app; the client turns
+    // it back into the IDi and asks for the balance — no credentials, no session.
+    let (status, v) = send(
+        &app,
+        "POST",
+        "/v1/self/balance",
+        None,
+        None,
+        json!({ "system_code": 3, "idi": hex::encode(ISSUE_ID) }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "self balance: {v}");
+    assert_eq!(v["total"], 700);
+    assert_eq!(v["system_code"], 3);
+    assert_eq!(v["buckets"].as_array().unwrap().len(), 1);
+    // The lower-trust path must not echo the raw identity or any merchant alias.
+    assert!(
+        v["idi"].is_null() && v["idm"].is_null() && v["account_id"].is_null(),
+        "self-service path leaked identity: {v}"
+    );
+
+    // An IDi with no melon account → 404, told apart from a zero balance.
+    let (status, _) = send(
+        &app,
+        "POST",
+        "/v1/self/balance",
+        None,
+        None,
+        json!({ "system_code": 3, "idi": "1111222233334444" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A malformed IDi is a client error.
+    let (status, _) = send(
+        &app,
+        "POST",
+        "/v1/self/balance",
+        None,
+        None,
+        json!({ "system_code": 3, "idi": "not-hex" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
