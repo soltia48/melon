@@ -56,6 +56,7 @@
 | 409 | `IDEMPOTENCY_CONFLICT` | 同一キーで異なるパラメータ | — |
 | 422 | `INSUFFICIENT_FUNDS` / `CREDIT_LIMIT_EXCEEDED` | 業務ルール違反 | `available`, `requested` |
 | 422 | `REFUND_EXCEEDS_PAYMENT` | 返金可能額の超過 | `requested`, `refundable` |
+| 422 | `UNSUPPORTED_CARD` | IDm が安定した識別子でないカード(製造者コードが `XXFEh`。下記参照) | — |
 
 ---
 
@@ -99,6 +100,8 @@
 { "idm": "0101010101010101", "pmm": "0100000000000000",
   "system_code": "0x0003", "areas": ["0x0000"], "services": ["0x0000"] }
 ```
+
+> **対応しないカード** — 開始時の `idm` の**製造者コード**(先頭 2 バイト、ビッグエンディアン)が `XXFEh`(下位バイトが `FEh`)のカードは、認証を始める前に **422 `UNSUPPORTED_CARD`** で拒否します。この空間は IDm が乱数化される体系(`01FEh`、`05FEh`、乱数化 ID を設定した FeliCa Standard の `X4FEh`/`X6FEh`)、番号体系が未規定のもの(`02FEh`)、FeliCa Standard の相互認証ができない製品(`03FEh`)、および予約コードで占められています。詳細は [domain.md](domain.md#アカウント利用者)。
 
 応答(`command.frame` をカードへ中継):
 

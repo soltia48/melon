@@ -659,12 +659,39 @@ pub async fn system_codes(
 
 // ----- mutual authentication (relay to the oracle) -----
 
+/// Refuse a card whose IDm is not a stable identifier.
+///
+/// The account key is `(system_code, idm, idi)`, so a card that hands out a fresh
+/// IDm on every tap would look like a brand-new account each time — its holder's
+/// balance would simply disappear. The manufacturer code says which cards those
+/// are (see [`Idm::has_stable_id`]); reject them at the door, before any
+/// authentication work, rather than let one open an account it can never reach
+/// again.
+fn reject_unstable_idm(idm: Idm) -> Result<(), ApiError> {
+    if idm.has_stable_id() {
+        return Ok(());
+    }
+    crate::security!(
+        manufacturer_code = format_args!("{:04X}h", idm.manufacturer_code()),
+        "card refused: its IDm is not a stable identifier"
+    );
+    Err(ApiError::unprocessable(
+        "UNSUPPORTED_CARD",
+        "this card cannot be used: its IDm is randomized or otherwise not a stable identifier",
+    ))
+}
+
 pub async fn mutual_authentication(
     State(state): State<AppState>,
     merchant: AuthedMerchant,
     body: Bytes,
 ) -> Result<Json<Value>, ApiError> {
     let input = melon_auth::http::parse_mutual_input(&body)?;
+    // The IDm arrives with the first step (the terminal has just polled the card);
+    // later steps only relay frames for a session that already passed this.
+    if let Some(idm) = input.idm {
+        reject_unstable_idm(Idm::from_bytes(idm))?;
+    }
     let request_session = input.session_id.clone();
     let mut value = state.manager.handle_mutual_authentication(input).await?;
 

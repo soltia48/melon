@@ -961,3 +961,65 @@ async fn every_response_carries_a_request_id(pool: PgPool) {
         .expect("a request id is minted");
     assert!(!minted.is_empty());
 }
+
+/// A card whose IDm is randomized cannot be an account: every tap would look like
+/// a new one, and the holder's balance would vanish. The manufacturer code gives
+/// it away, so the card is turned away before any authentication work — and long
+/// before it can open an account it could never reach again.
+#[sqlx::test(migrations = "../melon-db/migrations")]
+async fn a_card_with_a_randomized_idm_is_refused(pool: PgPool) {
+    let app = build_app(pool.clone());
+    let admin = sign_in_admin(&app, &pool).await;
+    let (_, v) = send(
+        &app,
+        "POST",
+        "/v1/merchants",
+        Some(&admin),
+        None,
+        json!({ "code": "shop-idm", "name": "IDm Shop" }),
+    )
+    .await;
+    let merchant_key = v["api_key"].as_str().unwrap().to_string();
+
+    // 04FEh: a FeliCa Standard card with a randomized ID (X4FEh, system number 0).
+    // The rest of the XXFEh block is covered by melon-core's unit tests.
+    let start = |idm: [u8; 8]| {
+        json!({
+            "idm": hex::encode(idm),
+            "pmm": hex::encode(PMM),
+            "system_code": "0x0003",
+            "areas": ["0x0000"],
+            "services": ["0x0048"],
+        })
+    };
+    let (status, v) = send(
+        &app,
+        "POST",
+        "/v1/mutual-authentication",
+        Some(&merchant_key),
+        None,
+        start([0x04, 0xFE, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert_eq!(v["error"]["code"], "UNSUPPORTED_CARD");
+    // Refused at the door: no session was opened for it.
+    assert!(v["session_id"].is_null(), "{v}");
+
+    // The emulated card's IDm (0102h) is a normal one, and still authenticates.
+    let (status, v) = send(
+        &app,
+        "POST",
+        "/v1/mutual-authentication",
+        Some(&merchant_key),
+        None,
+        start(IDM),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a normal card must still be let in: {v}"
+    );
+    assert_eq!(v["step"], "auth1");
+}

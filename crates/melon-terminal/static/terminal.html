@@ -872,6 +872,10 @@
           case "REFUND_EXCEEDS_PAYMENT":
             return { title: "返金できません", sub: "返金可能額を超えています" };
           case "SYSTEM_NOT_SUPPORTED":
+          // The server refused the card: its IDm is randomized, so it can never
+          // identify an account. Same dead end for the cashier as an unsupported
+          // system — nothing to retry.
+          case "UNSUPPORTED_CARD":
             return {
               title: "対応していないカードです",
               sub: "このカードは利用できません",
