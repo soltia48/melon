@@ -43,11 +43,14 @@ export function PortalShell({
   role,
   brand,
   tabs,
+  /** Optional link to the portal's manual, shown in the top bar. */
+  help,
   children,
 }: {
   role: Role;
   brand: string;
   tabs: Tab[];
+  help?: { href: string; label: string };
   children: React.ReactNode;
 }) {
   const [status, setStatus] = useState<Status>("loading");
@@ -111,7 +114,7 @@ export function PortalShell({
 
   return (
     <AuthContext.Provider value={{ user, merchant, reloadMerchant }}>
-      <Shell brand={brand} tabs={visibleTabs} who={who}>
+      <Shell brand={brand} tabs={visibleTabs} who={who} help={help}>
         {children}
       </Shell>
     </AuthContext.Provider>
@@ -122,11 +125,13 @@ function Shell({
   brand,
   tabs,
   who,
+  help,
   children,
 }: {
   brand: string;
   tabs: Tab[];
   who: string;
+  help?: { href: string; label: string };
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -170,6 +175,17 @@ function Shell({
             </Link>
           ))}
         </nav>
+        {help && (
+          <a
+            className="muted"
+            style={{ fontSize: 12.5, textDecoration: "none" }}
+            href={help.href}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {help.label}
+          </a>
+        )}
         <span className="muted" style={{ fontSize: 12.5 }}>
           {who}
         </span>

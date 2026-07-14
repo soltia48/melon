@@ -437,6 +437,9 @@ export function Landing({ c }: { c: LpCopy }) {
             <div className="col">
               <h4>{c.footer.merchantHead}</h4>
               <Link href="/merchant">{c.footer.portal}</Link>
+              <Link href="/merchant-guide" hrefLang="ja">
+                {c.footer.guide}
+              </Link>
               <a href={CONTACT}>{c.footer.contact}</a>
             </div>
             <div className="col">

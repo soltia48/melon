@@ -78,6 +78,7 @@ export interface LpCopy {
     resources: string;
     legal: string;
     portal: string;
+    guide: string;
     contact: string;
     dlDesktop: string;
     dlAndroid: string;
@@ -252,6 +253,7 @@ export const LP_JA: LpCopy = {
     resources: "リソース",
     legal: "規約",
     portal: "加盟店ポータル",
+    guide: "オペレーションマニュアル",
     contact: "お問い合わせ",
     dlDesktop: "デスクトップ版ダウンロード",
     dlAndroid: "Android 版ダウンロード",
@@ -423,6 +425,8 @@ export const LP_EN: LpCopy = {
     resources: "Resources",
     legal: "Legal",
     portal: "Merchant portal",
+    // Japanese only, like the legal texts — say so rather than imply a translation.
+    guide: "オペレーションマニュアル — Operations manual (Japanese)",
     contact: "Contact",
     dlDesktop: "Desktop terminal",
     dlAndroid: "Android app",

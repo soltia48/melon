@@ -1,8 +1,8 @@
 import Link from "next/link";
 
 /**
- * Shell for a published legal document (利用規約 / 加盟店規約). The body arrives as
- * HTML already rendered from the in-repo Markdown at build time.
+ * Shell for a published document (利用規約 / 加盟店規約 / 加盟店マニュアル). The body
+ * arrives as HTML already rendered from the in-repo Markdown at build time.
  */
 export function DocPage({ title, html }: { title: string; html: string }) {
   return (
@@ -14,6 +14,7 @@ export function DocPage({ title, html }: { title: string; html: string }) {
           Melon
         </Link>
         <nav className="doc-nav">
+          <Link href="/merchant-guide">加盟店マニュアル</Link>
           <Link href="/terms">利用規約</Link>
           <Link href="/merchant-terms">加盟店規約</Link>
         </nav>

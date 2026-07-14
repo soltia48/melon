@@ -3,9 +3,10 @@ import path from "node:path";
 import { Marked } from "marked";
 import markedCjkFriendly from "marked-cjk-friendly";
 
-// The legal documents are authored as Markdown in `web/content/` (the single
-// source of truth) and rendered to HTML at BUILD time, so the published pages are
-// fully static — the runtime image never reads them from disk.
+// The published documents (the legal texts and the merchant guide) are authored
+// as Markdown in `web/content/` (the single source of truth) and rendered to HTML
+// at BUILD time, so the pages are fully static — the runtime image never reads
+// them from disk.
 const CONTENT_DIR = path.join(process.cwd(), "content");
 
 // CommonMark's emphasis rules were written for languages that put spaces around
@@ -15,7 +16,7 @@ const CONTENT_DIR = path.join(process.cwd(), "content");
 // See https://github.com/commonmark/commonmark-spec/issues/650
 const marked = new Marked(markedCjkFriendly());
 
-export interface LegalDoc {
+export interface Doc {
   /** The document's top-level `#` heading, used as the page title. */
   title: string;
   /** The body rendered to HTML (the title heading is not repeated). */
@@ -23,7 +24,7 @@ export interface LegalDoc {
 }
 
 /** Read one Markdown document from `web/content/` and render it. */
-export function renderLegalDoc(file: string): LegalDoc {
+export function renderDoc(file: string): Doc {
   const md = fs.readFileSync(path.join(CONTENT_DIR, file), "utf8");
 
   // Lift the leading `# Title` out of the body so the page can render it as its

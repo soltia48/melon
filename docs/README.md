@@ -26,7 +26,7 @@
 | [api.md](api.md) | HTTP API リファレンス |
 | [operations.md](operations.md) | 環境変数、DB、端末、Web UI、ビルド、テスト |
 
-規約類(利用規約・加盟店規約)は Web に掲載するため [`web/content/`](../web/content/) に置いています。Markdown が唯一の原本で、ビルド時に `/terms` と `/merchant-terms` へ静的レンダリングされます。
+利用者・加盟店に向けて Web に掲載する文書(利用規約・加盟店規約・**加盟店オペレーションマニュアル**)は [`web/content/`](../web/content/) に置いています。Markdown が唯一の原本で、ビルド時に `/terms`・`/merchant-terms`・`/merchant-guide` へ静的レンダリングされます。
 
 ## クイックスタート
 

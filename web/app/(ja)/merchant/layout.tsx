@@ -15,7 +15,12 @@ export default function MerchantLayout({
   children: React.ReactNode;
 }) {
   return (
-    <PortalShell role="merchant" brand="Melon 加盟店ポータル" tabs={TABS}>
+    <PortalShell
+      role="merchant"
+      brand="Melon 加盟店ポータル"
+      tabs={TABS}
+      help={{ href: "/merchant-guide", label: "📖 マニュアル" }}
+    >
       {children}
     </PortalShell>
   );
