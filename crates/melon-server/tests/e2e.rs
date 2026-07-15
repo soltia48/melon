@@ -229,6 +229,49 @@ async fn authenticate(app: &Router, merchant_key: &str) -> (String, String) {
     panic!("authentication did not complete");
 }
 
+/// Drive the consumer (unauthenticated) mutual-authentication relay to
+/// completion and return its `result` — the balance the server computed for the
+/// card it just verified. No merchant credentials; the IDi never comes back.
+async fn self_authenticate(app: &Router) -> Value {
+    let mut card = emulated_card();
+    let (status, v) = send(
+        app,
+        "POST",
+        "/v1/self/authenticate",
+        None,
+        None,
+        json!({
+            "idm": hex::encode(IDM),
+            "pmm": hex::encode(PMM),
+            "system_code": "0x0003",
+            "areas": ["0x0000"],
+            "services": ["0x0048"],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "self auth1: {v}");
+    let session_id = v["session_id"].as_str().unwrap().to_string();
+
+    let mut card_response = relay_to_card(&mut card, v["command"]["frame"].as_str().unwrap());
+    for _ in 0..2 {
+        let (status, v) = send(
+            app,
+            "POST",
+            "/v1/self/authenticate",
+            None,
+            None,
+            json!({ "session_id": session_id, "card_response": card_response }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "self auth step: {v}");
+        if v["step"] == "complete" {
+            return v["result"].clone();
+        }
+        card_response = relay_to_card(&mut card, v["command"]["frame"].as_str().unwrap());
+    }
+    panic!("self authentication did not complete");
+}
+
 #[sqlx::test(migrations = "../melon-db/migrations")]
 async fn end_to_end_auth_topup_pay_balance(pool: PgPool) {
     let app = build_app(pool.clone());
@@ -1110,41 +1153,14 @@ async fn a_cardholder_reads_their_own_balance_by_idi(pool: PgPool) {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
-    // The same card, looked up instead by the IDm read off it over NFC.
-    let (status, v) = send(
-        &app,
-        "POST",
-        "/v1/self/balance",
-        None,
-        None,
-        json!({ "system_code": 3, "idm": hex::encode(IDM) }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "self balance by idm: {v}");
-    assert_eq!(v["total"], 700);
-
-    // A randomized IDm (the XXFEh block) is refused, as everywhere else.
-    let (status, v) = send(
-        &app,
-        "POST",
-        "/v1/self/balance",
-        None,
-        None,
-        json!({ "system_code": 3, "idm": "01fe000000000000" }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
-    assert_eq!(v["error"]["code"], "UNSUPPORTED_CARD");
-
-    // Neither identifier (or both) is a client error.
-    let (status, _) = send(
-        &app,
-        "POST",
-        "/v1/self/balance",
-        None,
-        None,
-        json!({ "system_code": 3 }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    // Card-present: the cardholder taps the card and the server drives mutual
+    // authentication. It gets the verified IDi and returns ONLY the balance —
+    // the app never receives the IDi.
+    let result = self_authenticate(&app).await;
+    assert_eq!(result["total"], 700, "card-present balance: {result}");
+    assert_eq!(result["system_code"], 3);
+    assert!(
+        result["idi"].is_null() && result["idm"].is_null() && result["account_id"].is_null(),
+        "the verified path leaked identity: {result}"
+    );
 }

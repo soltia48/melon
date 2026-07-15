@@ -965,68 +965,6 @@ where
     })
 }
 
-/// Whether any account exists for this `(system_code, idm)`, across every `idi`.
-/// Used by the card-tap self-service lookup, which reads only the IDm.
-pub async fn account_exists_by_idm<'e, E>(
-    exec: E,
-    system_code: u16,
-    idm: Idm,
-) -> Result<bool, DbError>
-where
-    E: PgExecutor<'e>,
-{
-    let row = sqlx::query("SELECT 1 FROM accounts WHERE system_code = $1 AND idm = $2 LIMIT 1")
-        .bind(system_code as i32)
-        .bind(idm.as_bytes().as_slice())
-        .fetch_optional(exec)
-        .await?;
-    Ok(row.is_some())
-}
-
-/// Spendable balance for a whole chip — every `idi` issued under this
-/// `(system_code, idm)`, aggregated. Used by the card-tap self-service lookup,
-/// where the phone reads the IDm off the card over NFC but cannot obtain the
-/// secret IDi. A physical chip normally carries one `idi`, so this equals that
-/// account's balance; a re-issued card sums its live buckets.
-pub async fn balance_by_idm<'e, E>(
-    exec: E,
-    system_code: u16,
-    idm: Idm,
-    now: Timestamp,
-) -> Result<BalanceBreakdown, DbError>
-where
-    E: PgExecutor<'e>,
-{
-    let rows = sqlx::query(
-        "SELECT id, remaining_amount, expires_at
-           FROM topup_buckets
-          WHERE system_code = $1 AND idm = $2 AND status = 'active'
-            AND expires_at > $3 AND remaining_amount > 0
-          ORDER BY expires_at, topped_up_at, id",
-    )
-    .bind(system_code as i32)
-    .bind(idm.as_bytes().as_slice())
-    .bind(to_odt(now))
-    .fetch_all(exec)
-    .await?;
-
-    let mut buckets = Vec::with_capacity(rows.len());
-    let mut total = 0i64;
-    for row in rows {
-        let remaining: i64 = row.try_get("remaining_amount")?;
-        total = total.saturating_add(remaining);
-        buckets.push(BucketView {
-            bucket_id: row.try_get("id")?,
-            remaining: Yen::new(remaining),
-            expires_at: to_jiff(row.try_get("expires_at")?),
-        });
-    }
-    Ok(BalanceBreakdown {
-        total: Yen::new(total),
-        buckets,
-    })
-}
-
 async fn ensure_account(tx: &mut sqlx::PgConnection, account: AccountKey) -> Result<(), DbError> {
     sqlx::query(
         "INSERT INTO accounts (system_code, idm, idi) VALUES ($1, $2, $3)

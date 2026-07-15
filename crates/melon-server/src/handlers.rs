@@ -810,11 +810,8 @@ pub struct SelfBalanceReq {
     pub system_code: u16,
     /// The 16-hex-character IDi. Cardholders read the string form of this — the
     /// "card ID" shown in transit-IC wallet apps (Suica, PASMO, …) — and the
-    /// client converts it back to hex. Supply exactly one of `idi` / `idm`.
-    pub idi: Option<String>,
-    /// The 16-hex-character IDm, as read off a card over NFC. Supply exactly one
-    /// of `idi` / `idm`.
-    pub idm: Option<String>,
+    /// client converts it back to hex.
+    pub idi: String,
 }
 
 /// The self-service balance view. Deliberately carries ONLY the spendable total
@@ -828,12 +825,10 @@ pub struct SelfBalanceResp {
     pub buckets: Vec<BucketView>,
 }
 
-/// Unauthenticated self-service balance: a cardholder reads the spendable balance
-/// for their own card, identified by `(system_code, idi)` OR `(system_code, idm)`
-/// alone. There is no mutual authentication here — the caller simply asserts an
-/// IDi (its string form is the "card ID" shown in a wallet app) or an IDm (read
-/// off the card over NFC) — so this is a read-only, lower-trust path than the
-/// merchant/admin balance endpoints.
+/// Unauthenticated self-service balance by the cardholder's own IDi. The IDi is
+/// simply asserted here (its string form is the "card ID" shown in a wallet app),
+/// so this is a read-only, lower-trust convenience path. A card-present, verified
+/// lookup is [`self_authenticate`].
 ///
 /// The identifier travels in the request body, never the URL, so it stays out of
 /// the access log (card identities are not logged by default).
@@ -841,38 +836,58 @@ pub async fn self_balance(
     State(state): State<AppState>,
     Json(req): Json<SelfBalanceReq>,
 ) -> Result<Json<SelfBalanceResp>, ApiError> {
-    let sc = req.system_code;
-    let (exists, bal) = match (req.idi.as_deref(), req.idm.as_deref()) {
-        (Some(idi), None) => {
-            let idi = parse_idi(idi)?;
-            (
-                ops::account_exists_by_idi(&state.pool, sc, idi).await?,
-                ops::balance_by_idi(&state.pool, sc, idi, now()).await?,
-            )
-        }
-        (None, Some(idm)) => {
-            let idm = parse_idm(idm)?;
-            // A randomized/undefined IDm (the `XXFEh` block) is never a real account.
-            reject_unstable_idm(idm)?;
-            (
-                ops::account_exists_by_idm(&state.pool, sc, idm).await?,
-                ops::balance_by_idm(&state.pool, sc, idm, now()).await?,
-            )
-        }
-        _ => {
-            return Err(ApiError::bad_request(
-                "provide exactly one of idi, idm",
-            ));
-        }
-    };
-    if !exists {
+    let idi = parse_idi(&req.idi)?;
+    if !ops::account_exists_by_idi(&state.pool, req.system_code, idi).await? {
         return Err(ApiError::not_found("no account for this card"));
     }
+    let bal = ops::balance_by_idi(&state.pool, req.system_code, idi, now()).await?;
     Ok(Json(SelfBalanceResp {
-        system_code: sc,
+        system_code: req.system_code,
         total: bal.total.as_i64(),
         buckets: bucket_views(bal),
     }))
+}
+
+/// Card-present self-service balance: the cardholder's own device relays the
+/// server-driven mutual authentication (same 3-step protocol as
+/// [`mutual_authentication`], but with no merchant credentials). The server holds
+/// the keys, so it — and only it — obtains the verified IDi; the cardholder's app
+/// never receives it. On completion the `result` carries the balance for that
+/// verified card and nothing that identifies it further.
+///
+/// This proves the caller physically holds the genuine card, which asserting a
+/// bare IDi/IDm does not. Unauthenticated, so protect it with a rate limit.
+pub async fn self_authenticate(
+    State(state): State<AppState>,
+    body: Bytes,
+) -> Result<Json<Value>, ApiError> {
+    let input = melon_auth::http::parse_mutual_input(&body)?;
+    // The IDm arrives with the first step; refuse a card whose IDm is not stable.
+    if let Some(idm) = input.idm {
+        reject_unstable_idm(Idm::from_bytes(idm))?;
+    }
+    let request_session = input.session_id.clone();
+    let mut value = state.manager.handle_mutual_authentication(input).await?;
+
+    if value["step"] == "complete" {
+        let session_id = request_session
+            .or_else(|| value["session_id"].as_str().map(str::to_string))
+            .ok_or_else(|| ApiError::internal("authenticated session id missing"))?;
+        // The oracle now holds the verified IDi. Resolve the balance here and
+        // return ONLY that — the IDi never leaves the server.
+        let (sc, _idm, idi) = state
+            .manager
+            .authenticated_account(&session_id)
+            .ok_or_else(|| ApiError::internal("authenticated session not found"))?;
+        let bal = ops::balance_by_idi(&state.pool, sc, Idi::from_bytes(idi), now()).await?;
+        value["result"] = serde_json::to_value(SelfBalanceResp {
+            system_code: sc,
+            total: bal.total.as_i64(),
+            buckets: bucket_views(bal),
+        })
+        .map_err(|_| ApiError::internal("failed to serialize balance"))?;
+    }
+    Ok(Json(value))
 }
 
 // ----- top-up -----
