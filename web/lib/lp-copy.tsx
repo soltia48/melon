@@ -273,7 +273,7 @@ export const LP_JA: LpCopy = {
   cards: {
     eyebrow: "対応カード",
     h2: "お手持ちのカードが、そのまま使えます。",
-    lead: "melon が対応する主な FeliCa カードです。",
+    lead: "melon が対応する主な FeliCa です。",
     transit: { t: "交通系ICカード", note: "10カード(テンカード)" },
     emoney: {
       t: "電子マネー",
