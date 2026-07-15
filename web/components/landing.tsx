@@ -364,6 +364,7 @@ export function Landing({ c }: { c: LpCopy }) {
               </a>
             </div>
           </div>
+          <p className="cards-note">{c.cards.note}</p>
         </div>
       </section>
 

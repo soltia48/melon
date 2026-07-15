@@ -1208,6 +1208,12 @@ tr.clickable:hover td {
 .lp .cards-link:hover .arw {
   transform: translateX(2px);
 }
+.lp .cards-note {
+  margin: 30px 0 0;
+  font-size: 0.82rem;
+  color: var(--lp-body);
+  max-width: 72ch;
+}
 
 /* cardholder app band (Mobile Melon) — the optional balance-check app */
 .lp .app-band .wrap {

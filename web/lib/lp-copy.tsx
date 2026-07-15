@@ -78,6 +78,7 @@ export interface LpCopy {
     transit: { t: string; note: string };
     emoney: { t: string; items: string[] };
     fcf: { t: string; link: string; items: string[] };
+    note: string;
   };
   /** The optional cardholder app (Mobile Melon) — balance checking only. */
   app: {
@@ -272,17 +273,18 @@ export const LP_JA: LpCopy = {
   cards: {
     eyebrow: "対応カード",
     h2: "お手持ちのカードが、そのまま使えます。",
-    lead: "melon が対応する FeliCa カードです。対応カードは当社が指定するものに限ります。",
+    lead: "melon が対応する主な FeliCa カードです。",
     transit: { t: "交通系ICカード", note: "10カード(テンカード)" },
     emoney: {
       t: "電子マネー",
-      items: ["楽天 Edy", "nanaco", "WAON", "QUICPay", "iD"],
+      items: ["楽天 Edy", "nanaco", "WAON", "QUICPay", "iD", "エヌタスカード"],
     },
     fcf: {
       t: "FCF",
       link: "FCF について",
       items: ["FCF 学生証", "FCF 社員証"],
     },
+    note: "リストにないカードでも、システムコード 0x0003(交通系IC)または 0xFE00(共通領域)を持つ FeliCa であれば、対応している場合があります。対応可否は当社の指定によります。",
   },
   app: {
     eyebrow: "利用者向けアプリ・任意",
@@ -482,17 +484,18 @@ export const LP_EN: LpCopy = {
   cards: {
     eyebrow: "Supported cards",
     h2: "Your existing card just works.",
-    lead: "The FeliCa cards melon accepts. Supported cards are limited to those we designate.",
+    lead: "The main FeliCa cards melon accepts.",
     transit: { t: "Transit IC cards", note: "the nationwide 10" },
     emoney: {
       t: "E-money",
-      items: ["Rakuten Edy", "nanaco", "WAON", "QUICPay", "iD"],
+      items: ["Rakuten Edy", "nanaco", "WAON", "QUICPay", "iD", "N+card"],
     },
     fcf: {
       t: "FCF",
       link: "About FCF",
       items: ["FCF student ID", "FCF employee ID"],
     },
+    note: "Cards not listed here may also work if they carry FeliCa system code 0x0003 (transit IC) or 0xFE00 (common area). Final support is at our designation.",
   },
   app: {
     eyebrow: "For cardholders · optional",
