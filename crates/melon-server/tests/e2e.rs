@@ -1109,4 +1109,42 @@ async fn a_cardholder_reads_their_own_balance_by_idi(pool: PgPool) {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // The same card, looked up instead by the IDm read off it over NFC.
+    let (status, v) = send(
+        &app,
+        "POST",
+        "/v1/self/balance",
+        None,
+        None,
+        json!({ "system_code": 3, "idm": hex::encode(IDM) }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "self balance by idm: {v}");
+    assert_eq!(v["total"], 700);
+
+    // A randomized IDm (the XXFEh block) is refused, as everywhere else.
+    let (status, v) = send(
+        &app,
+        "POST",
+        "/v1/self/balance",
+        None,
+        None,
+        json!({ "system_code": 3, "idm": "01fe000000000000" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert_eq!(v["error"]["code"], "UNSUPPORTED_CARD");
+
+    // Neither identifier (or both) is a client error.
+    let (status, _) = send(
+        &app,
+        "POST",
+        "/v1/self/balance",
+        None,
+        None,
+        json!({ "system_code": 3 }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }

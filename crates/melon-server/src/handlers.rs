@@ -810,8 +810,11 @@ pub struct SelfBalanceReq {
     pub system_code: u16,
     /// The 16-hex-character IDi. Cardholders read the string form of this — the
     /// "card ID" shown in transit-IC wallet apps (Suica, PASMO, …) — and the
-    /// client converts it back to hex.
-    pub idi: String,
+    /// client converts it back to hex. Supply exactly one of `idi` / `idm`.
+    pub idi: Option<String>,
+    /// The 16-hex-character IDm, as read off a card over NFC. Supply exactly one
+    /// of `idi` / `idm`.
+    pub idm: Option<String>,
 }
 
 /// The self-service balance view. Deliberately carries ONLY the spendable total
@@ -826,24 +829,47 @@ pub struct SelfBalanceResp {
 }
 
 /// Unauthenticated self-service balance: a cardholder reads the spendable balance
-/// for their own card, identified by `(system_code, idi)` alone. There is no
-/// mutual authentication here — the caller simply asserts an IDi (its string form
-/// is the "card ID" the cardholder can read from their wallet app) — so this is a
-/// read-only, lower-trust path than the merchant/admin balance endpoints.
+/// for their own card, identified by `(system_code, idi)` OR `(system_code, idm)`
+/// alone. There is no mutual authentication here — the caller simply asserts an
+/// IDi (its string form is the "card ID" shown in a wallet app) or an IDm (read
+/// off the card over NFC) — so this is a read-only, lower-trust path than the
+/// merchant/admin balance endpoints.
 ///
-/// The IDi travels in the request body, never the URL, so it stays out of the
-/// access log (card identities are not logged by default).
+/// The identifier travels in the request body, never the URL, so it stays out of
+/// the access log (card identities are not logged by default).
 pub async fn self_balance(
     State(state): State<AppState>,
     Json(req): Json<SelfBalanceReq>,
 ) -> Result<Json<SelfBalanceResp>, ApiError> {
-    let idi = parse_idi(&req.idi)?;
-    if !ops::account_exists_by_idi(&state.pool, req.system_code, idi).await? {
+    let sc = req.system_code;
+    let (exists, bal) = match (req.idi.as_deref(), req.idm.as_deref()) {
+        (Some(idi), None) => {
+            let idi = parse_idi(idi)?;
+            (
+                ops::account_exists_by_idi(&state.pool, sc, idi).await?,
+                ops::balance_by_idi(&state.pool, sc, idi, now()).await?,
+            )
+        }
+        (None, Some(idm)) => {
+            let idm = parse_idm(idm)?;
+            // A randomized/undefined IDm (the `XXFEh` block) is never a real account.
+            reject_unstable_idm(idm)?;
+            (
+                ops::account_exists_by_idm(&state.pool, sc, idm).await?,
+                ops::balance_by_idm(&state.pool, sc, idm, now()).await?,
+            )
+        }
+        _ => {
+            return Err(ApiError::bad_request(
+                "provide exactly one of idi, idm",
+            ));
+        }
+    };
+    if !exists {
         return Err(ApiError::not_found("no account for this card"));
     }
-    let bal = ops::balance_by_idi(&state.pool, req.system_code, idi, now()).await?;
     Ok(Json(SelfBalanceResp {
-        system_code: req.system_code,
+        system_code: sc,
         total: bal.total.as_i64(),
         buckets: bucket_views(bal),
     }))
