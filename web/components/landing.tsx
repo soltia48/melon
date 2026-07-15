@@ -5,6 +5,7 @@ const CONTACT = "https://unknowntech.jp/contact";
 const GITHUB = "https://github.com/soltia48/melon";
 const DL_DESKTOP = "https://github.com/soltia48/melon/releases";
 const DL_ANDROID = "https://github.com/soltia48/MelonTerminal-Android/releases";
+const DL_MOBILE = "https://github.com/soltia48/MobileMelon-Android/releases";
 
 /** Slashed circle — marks the things a user does NOT have to get hold of. */
 function NoIcon() {
@@ -298,6 +299,98 @@ export function Landing({ c }: { c: LpCopy }) {
         </div>
       </section>
 
+      <section id="app" className="app-band">
+        <div className="wrap">
+          <div className="app-copy">
+            <div className="eyebrow">{c.app.eyebrow}</div>
+            <h2>{c.app.h2}</h2>
+            <p className="lead">{c.app.lead}</p>
+            <ul className="app-ways">
+              <li>
+                <span className="w-ic" aria-hidden="true">
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M7 8.5c2.4 1.8 2.4 5.2 0 7M11 5.5c4 3 4 9.5 0 12.5M15 3c5.4 4 5.4 13 0 17" />
+                  </svg>
+                </span>
+                <div>
+                  <b>{c.app.tap.t}</b>
+                  <span>{c.app.tap.b}</span>
+                </div>
+              </li>
+              <li>
+                <span className="w-ic" aria-hidden="true">
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect x="3" y="6" width="18" height="12" rx="2" />
+                    <path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10" />
+                  </svg>
+                </span>
+                <div>
+                  <b>{c.app.id.t}</b>
+                  <span>{c.app.id.b}</span>
+                </div>
+              </li>
+            </ul>
+            <div className="app-actions">
+              <a
+                className="btn btn-primary"
+                href={DL_MOBILE}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {c.app.download} <span className="arw">→</span>
+              </a>
+              <span className="pill">{c.app.pill}</span>
+            </div>
+            <p className="microcopy">{c.app.note}</p>
+          </div>
+
+          <div className="appshot" aria-hidden="true">
+            <div className="phone">
+              <span className="notch" />
+              <div className="screen">
+                <div className="ph-top">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/melon-logo.png" alt="" />
+                  <span>Mobile Melon</span>
+                </div>
+                <div className="ph-bal">
+                  <div className="k">{c.app.balance}</div>
+                  <div className="v">¥65,535</div>
+                </div>
+                <div className="ph-rows">
+                  <div className="ph-row">
+                    <span className="mono">2027-01-12</span>
+                    <span>¥40,000</span>
+                  </div>
+                  <div className="ph-row">
+                    <span className="mono">2027-03-30</span>
+                    <span>¥25,535</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="terminals" className="term-band">
         <div className="wrap">
           <div className="sec-head">
@@ -453,6 +546,9 @@ export function Landing({ c }: { c: LpCopy }) {
               </a>
               <a href={DL_ANDROID} target="_blank" rel="noopener noreferrer">
                 {c.footer.dlAndroid}
+              </a>
+              <a href={DL_MOBILE} target="_blank" rel="noopener noreferrer">
+                {c.footer.dlMobile}
               </a>
             </div>
             <div className="col">

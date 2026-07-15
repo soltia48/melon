@@ -1136,6 +1136,156 @@ tr.clickable:hover td {
   transform: translateX(2px);
 }
 
+/* cardholder app band (Mobile Melon) — the optional balance-check app */
+.lp .app-band .wrap {
+  display: grid;
+  grid-template-columns: 1fr 0.8fr;
+  gap: 48px;
+  align-items: center;
+}
+@media (max-width: 860px) {
+  .lp .app-band .wrap {
+    grid-template-columns: 1fr;
+    gap: 32px;
+    justify-items: start;
+  }
+}
+.lp .app-copy h2 {
+  font-size: clamp(1.55rem, 3.2vw, 2.15rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 10px 0 0;
+}
+.lp .app-copy p.lead {
+  font-size: 1.05rem;
+  max-width: 46ch;
+  margin: 16px 0 0;
+  color: var(--lp-body);
+}
+.lp .app-ways {
+  list-style: none;
+  margin: 22px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+}
+.lp .app-ways li {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.lp .app-ways .w-ic {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: var(--accent-weak);
+  color: var(--accent);
+}
+.lp .app-ways b {
+  display: block;
+  font-weight: 700;
+  font-size: 0.96rem;
+  color: var(--text);
+}
+.lp .app-ways span {
+  font-size: 0.88rem;
+  color: var(--lp-body);
+}
+.lp .app-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 26px;
+  flex-wrap: wrap;
+}
+.lp .app-copy .microcopy {
+  margin-top: 14px;
+  font-size: 0.8rem;
+  color: var(--lp-body);
+  opacity: 0.85;
+}
+
+/* phone mockup — mirrors the app's balance screen */
+.lp .appshot {
+  display: flex;
+  justify-content: center;
+}
+.lp .phone {
+  position: relative;
+  width: 240px;
+  border-radius: 34px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 16px;
+  outline: 6px solid color-mix(in srgb, var(--border) 55%, transparent);
+  outline-offset: -1px;
+}
+.lp .phone .notch {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 74px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border);
+}
+.lp .phone .screen {
+  margin-top: 18px;
+  border-radius: 22px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  padding: 18px 16px 20px;
+}
+.lp .phone .ph-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+.lp .phone .ph-top img {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+}
+.lp .phone .ph-bal {
+  margin-top: 18px;
+}
+.lp .phone .ph-bal .k {
+  font-size: 0.72rem;
+  color: var(--lp-body);
+  letter-spacing: 0.04em;
+}
+.lp .phone .ph-bal .v {
+  font-size: 1.9rem;
+  font-weight: 800;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+.lp .phone .ph-rows {
+  margin-top: 18px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+.lp .phone .ph-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.82rem;
+  color: var(--lp-body);
+}
+.lp .phone .ph-row .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 /* cta band — committed deep green (readable in both themes) */
 .lp .cta-band {
   position: relative;

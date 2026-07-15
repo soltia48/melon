@@ -70,6 +70,18 @@ export interface LpCopy {
     desktop: Item & { pill: string };
     api: Item & { pill: string };
   };
+  /** The optional cardholder app (Mobile Melon) — balance checking only. */
+  app: {
+    eyebrow: string;
+    h2: ReactNode;
+    lead: ReactNode;
+    tap: Item;
+    id: Item;
+    download: string;
+    pill: string;
+    note: string;
+    balance: string;
+  };
   cta: { h2: string; lead: string; contact: string; portal: string };
   footer: {
     about: string;
@@ -82,6 +94,7 @@ export interface LpCopy {
     contact: string;
     dlDesktop: string;
     dlAndroid: string;
+    dlMobile: string;
     terms: string;
     merchantTerms: string;
     note: string;
@@ -247,6 +260,28 @@ export const LP_JA: LpCopy = {
       pill: "/v1",
     },
   },
+  app: {
+    eyebrow: "利用者向けアプリ・任意",
+    h2: "残高は、スマホで。",
+    lead: (
+      <>
+        支払いにアプリは要りません。残高を確認したいときだけ、Mobile
+        Melon（Android・無料）でどうぞ。
+      </>
+    ),
+    tap: {
+      t: "カードをかざす",
+      b: "手持ちのカードを NFC にかざして、その場で残高を確認。",
+    },
+    id: {
+      t: "カード ID を入力",
+      b: "一度登録すれば、アプリを開くだけで残高を表示。",
+    },
+    download: "Android アプリを入手",
+    pill: "Android",
+    note: "GitHub のリリースから入手できます（提供元不明のアプリのインストール許可が必要です）。",
+    balance: "残高",
+  },
   cta: {
     h2: "導入をご検討ですか?",
     lead: "Melon の導入・お見積りは、お問い合わせページからご相談ください。すでに加盟店の方は、ポータルからサインインできます。",
@@ -264,6 +299,7 @@ export const LP_JA: LpCopy = {
     contact: "お問い合わせ",
     dlDesktop: "デスクトップ版ダウンロード",
     dlAndroid: "Android 版ダウンロード",
+    dlMobile: "残高確認アプリ (Android)",
     terms: "利用規約",
     merchantTerms: "加盟店規約",
     note: "Melon は前払式支払手段(第三者型)の発行・管理基盤です。",
@@ -419,6 +455,28 @@ export const LP_EN: LpCopy = {
       pill: "/v1",
     },
   },
+  app: {
+    eyebrow: "For cardholders · optional",
+    h2: "Your balance, on your phone.",
+    lead: (
+      <>
+        You don&rsquo;t need an app to pay with Melon. When you just want to
+        check your balance, there&rsquo;s Mobile Melon (Android, free).
+      </>
+    ),
+    tap: {
+      t: "Tap your card",
+      b: "Hold your card to the phone&rsquo;s NFC and see the balance on the spot.",
+    },
+    id: {
+      t: "Enter your card ID",
+      b: "Register it once, then just open the app to see your balance.",
+    },
+    download: "Get the Android app",
+    pill: "Android",
+    note: "Available from GitHub releases (installing apps from unknown sources must be allowed).",
+    balance: "Balance",
+  },
   cta: {
     h2: "Thinking about Melon?",
     lead: "Get in touch through our contact page for rollout and pricing. Already a merchant? Sign in from the portal.",
@@ -437,6 +495,7 @@ export const LP_EN: LpCopy = {
     contact: "Contact",
     dlDesktop: "Desktop terminal",
     dlAndroid: "Android app",
+    dlMobile: "Balance app (Android)",
     // Japanese is the binding text, so say so rather than implying a translation.
     terms: "利用規約 — Terms of Use (Japanese)",
     merchantTerms: "加盟店規約 — Merchant Terms (Japanese)",
