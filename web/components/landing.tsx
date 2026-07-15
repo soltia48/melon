@@ -6,6 +6,21 @@ const GITHUB = "https://github.com/soltia48/melon";
 const DL_DESKTOP = "https://github.com/soltia48/melon/releases";
 const DL_ANDROID = "https://github.com/soltia48/MelonTerminal-Android/releases";
 const DL_MOBILE = "https://github.com/soltia48/MobileMelon-Android/releases";
+const FCF_URL = "https://fcf-forum.jp/fcf1239212399.html";
+
+/** The nationwide interoperable transit IC cards (brand names — not translated). */
+const TRANSIT_CARDS = [
+  "Kitaca",
+  "Suica",
+  "TOICA",
+  "ICOCA",
+  "SUGOCA",
+  "PASMO",
+  "manaca",
+  "PiTaPa",
+  "はやかけん",
+  "nimoca",
+];
 
 /** Slashed circle — marks the things a user does NOT have to get hold of. */
 function NoIcon() {
@@ -299,6 +314,59 @@ export function Landing({ c }: { c: LpCopy }) {
         </div>
       </section>
 
+      <section id="cards" className="cards-band">
+        <div className="wrap">
+          <div className="sec-head">
+            <div className="eyebrow">{c.cards.eyebrow}</div>
+            <h2>{c.cards.h2}</h2>
+            <p>{c.cards.lead}</p>
+          </div>
+          <div className="card-groups">
+            <div className="card-group wide">
+              <h3>
+                {c.cards.transit.t}
+                <span className="count">{c.cards.transit.note}</span>
+              </h3>
+              <ul className="cardchips">
+                {TRANSIT_CARDS.map((name) => (
+                  <li key={name} className="cardchip">
+                    {name}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="card-group">
+              <h3>{c.cards.emoney.t}</h3>
+              <ul className="cardchips">
+                {c.cards.emoney.items.map((name) => (
+                  <li key={name} className="cardchip">
+                    {name}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="card-group">
+              <h3>{c.cards.fcf.t}</h3>
+              <ul className="cardchips">
+                {c.cards.fcf.items.map((name) => (
+                  <li key={name} className="cardchip">
+                    {name}
+                  </li>
+                ))}
+              </ul>
+              <a
+                className="cards-link"
+                href={FCF_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {c.cards.fcf.link} <span className="arw">→</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="app" className="app-band">
         <div className="wrap">
           <div className="app-copy">
@@ -526,6 +594,7 @@ export function Landing({ c }: { c: LpCopy }) {
               <h4>{c.footer.product}</h4>
               <a href="#features">{c.nav.features}</a>
               <a href="#how">{c.nav.how}</a>
+              <a href="#cards">{c.cards.eyebrow}</a>
               <a href="#terminals">{c.terminals.eyebrow}</a>
             </div>
             <div className="col">

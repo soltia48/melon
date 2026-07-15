@@ -1136,6 +1136,79 @@ tr.clickable:hover td {
   transform: translateX(2px);
 }
 
+/* supported-cards band */
+.lp .cards-band {
+  background: var(--panel);
+  border-block: 1px solid var(--border);
+}
+.lp .card-groups {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px 40px;
+}
+/* Transit (10 chips) gets the full width; e-money and FCF share the row below. */
+.lp .card-group.wide {
+  grid-column: 1 / -1;
+}
+@media (max-width: 760px) {
+  .lp .card-groups {
+    grid-template-columns: 1fr;
+    gap: 28px;
+  }
+}
+.lp .card-group h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 1rem;
+  font-weight: 750;
+  margin: 0 0 14px;
+}
+.lp .card-group h3 .count {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-weak);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+.lp .cardchips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.lp .cardchip {
+  padding: 7px 13px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.lp .cards-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+.lp .cards-link:hover {
+  color: var(--lp-vine);
+}
+.lp .cards-link .arw {
+  transition: transform 0.15s ease;
+}
+.lp .cards-link:hover .arw {
+  transform: translateX(2px);
+}
+
 /* cardholder app band (Mobile Melon) — the optional balance-check app */
 .lp .app-band .wrap {
   display: grid;

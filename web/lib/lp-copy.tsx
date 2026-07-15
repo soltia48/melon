@@ -70,6 +70,15 @@ export interface LpCopy {
     desktop: Item & { pill: string };
     api: Item & { pill: string };
   };
+  /** The FeliCa cards melon accepts. */
+  cards: {
+    eyebrow: string;
+    h2: string;
+    lead: string;
+    transit: { t: string; note: string };
+    emoney: { t: string; items: string[] };
+    fcf: { t: string; link: string; items: string[] };
+  };
   /** The optional cardholder app (Mobile Melon) — balance checking only. */
   app: {
     eyebrow: string;
@@ -258,6 +267,21 @@ export const LP_JA: LpCopy = {
         </>
       ),
       pill: "/v1",
+    },
+  },
+  cards: {
+    eyebrow: "対応カード",
+    h2: "お手持ちのカードが、そのまま使えます。",
+    lead: "melon が対応する FeliCa カードです。対応カードは当社が指定するものに限ります。",
+    transit: { t: "交通系ICカード", note: "10カード(テンカード)" },
+    emoney: {
+      t: "電子マネー",
+      items: ["楽天 Edy", "nanaco", "WAON", "QUICPay", "iD"],
+    },
+    fcf: {
+      t: "FCF",
+      link: "FCF について",
+      items: ["FCF 学生証", "FCF 社員証"],
     },
   },
   app: {
@@ -453,6 +477,21 @@ export const LP_EN: LpCopy = {
       t: "REST API",
       b: "Mutual authentication, payments, refunds and balance lookups over JSON. Integrate your own terminal or back office directly.",
       pill: "/v1",
+    },
+  },
+  cards: {
+    eyebrow: "Supported cards",
+    h2: "Your existing card just works.",
+    lead: "The FeliCa cards melon accepts. Supported cards are limited to those we designate.",
+    transit: { t: "Transit IC cards", note: "the nationwide 10" },
+    emoney: {
+      t: "E-money",
+      items: ["Rakuten Edy", "nanaco", "WAON", "QUICPay", "iD"],
+    },
+    fcf: {
+      t: "FCF",
+      link: "About FCF",
+      items: ["FCF student ID", "FCF employee ID"],
     },
   },
   app: {
