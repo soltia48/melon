@@ -474,6 +474,58 @@ async fn refund_is_idempotent(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn concurrent_refunds_never_over_refund(pool: PgPool) {
+    let a = acct(28);
+    let m = ops::create_merchant(
+        &pool,
+        "m-conc-refund",
+        "Concurrent Refund Test",
+        0,
+        10_000_000,
+    )
+    .await
+    .unwrap();
+    let t0 = ts("2026-01-15T09:00:00+09:00");
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
+        .await
+        .unwrap();
+
+    // Two ¥500 payments share and exhaust the same ¥1000 bucket.
+    let p1 = ops::pay(&pool, a, m, None, yen(500), "p1", None, t0)
+        .await
+        .unwrap();
+    ops::pay(&pool, a, m, None, yen(500), "p2", None, t0)
+        .await
+        .unwrap();
+    assert_eq!(ops::balance(&pool, a, t0).await.unwrap().total, Yen::new(0));
+
+    // Five concurrent refunds of payment #1, each with a distinct idempotency
+    // key. Only one may succeed: the bucket's `remaining_amount <=
+    // original_amount` CHECK cannot catch an over-refund here, because payment
+    // #2 left enough headroom in the shared bucket to absorb it.
+    let mut handles = Vec::new();
+    for i in 0..5 {
+        let pool = pool.clone();
+        let payment_id = p1.transaction_id;
+        handles.push(tokio::spawn(async move {
+            ops::refund(&pool, payment_id, Some(yen(500)), &format!("r-{i}"), t0).await
+        }));
+    }
+    let mut successes = 0;
+    for h in handles {
+        if h.await.unwrap().is_ok() {
+            successes += 1;
+        }
+    }
+
+    assert_eq!(successes, 1, "payment #1 was only ¥500");
+    assert_eq!(
+        ops::balance(&pool, a, t0).await.unwrap().total,
+        Yen::new(500)
+    );
+}
+
+#[sqlx::test]
 async fn sweep_forfeits_expired_and_is_idempotent(pool: PgPool) {
     let a = acct(15);
     let t0 = ts("2026-01-15T09:00:00+09:00"); // expires 2026-07-15

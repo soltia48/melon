@@ -1370,9 +1370,11 @@ async fn restore(
 ) -> Result<Refund, DbError> {
     let mut tx = pool.begin().await?;
 
-    // Original payment.
+    // Original payment, locked for the transaction so concurrent refunds of the
+    // same payment serialize here instead of racing the "already refunded"
+    // check below. `pay()` takes the same precaution on its buckets.
     let prow = sqlx::query(
-        "SELECT system_code, idm, idi, merchant_id, store_id, amount, kind FROM transactions WHERE id = $1",
+        "SELECT system_code, idm, idi, merchant_id, store_id, amount, kind FROM transactions WHERE id = $1 FOR UPDATE",
     )
     .bind(payment_txn_id)
     .fetch_optional(&mut *tx)
