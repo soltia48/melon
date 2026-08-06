@@ -1435,6 +1435,52 @@ async fn restore(
         });
     }
 
+    // Original per-bucket debits, in consumption order.
+    let debits = sqlx::query(
+        "SELECT bucket_id, amount FROM ledger_entries
+          WHERE transaction_id = $1 AND kind = 'payment' ORDER BY seq",
+    )
+    .bind(payment_txn_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    // Amount already restored to each bucket by prior refunds/reversals.
+    let mut already_by_bucket: HashMap<Uuid, i64> = HashMap::new();
+    let ref_rows = sqlx::query(
+        "SELECT le.bucket_id, COALESCE(SUM(le.amount), 0)::bigint AS refunded
+           FROM ledger_entries le
+           JOIN transactions t ON t.id = le.transaction_id
+          WHERE t.related_txn_id = $1 AND le.kind IN ('refund', 'reversal')
+          GROUP BY le.bucket_id",
+    )
+    .bind(payment_txn_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for r in ref_rows {
+        if let Some(b) = r.try_get::<Option<Uuid>, _>("bucket_id")? {
+            already_by_bucket.insert(b, r.try_get("refunded")?);
+        }
+    }
+
+    // Plan the restoration in reverse consumption order, capped per bucket at
+    // what it still owes, before writing anything. The original expiry is
+    // preserved (we never touch expires_at).
+    let mut remaining_to_refund = refund_amount;
+    let mut plan: Vec<(Uuid, i64)> = Vec::new();
+    for r in debits.into_iter().rev() {
+        if remaining_to_refund == 0 {
+            break;
+        }
+        let bucket_id: Uuid = r.try_get("bucket_id")?;
+        let debited = -r.try_get::<i64, _>("amount")?;
+        let bucket_refundable = debited - already_by_bucket.get(&bucket_id).copied().unwrap_or(0);
+        let restore_amt = remaining_to_refund.min(bucket_refundable);
+        if restore_amt > 0 {
+            plan.push((bucket_id, restore_amt));
+            remaining_to_refund -= restore_amt;
+        }
+    }
+
     let txn_id = Uuid::now_v7();
     let inserted: Option<Uuid> = sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO transactions (id, system_code, idm, idi, kind, merchant_id, store_id, amount, idempotency_key, related_txn_id, occurred_at)
@@ -1472,72 +1518,32 @@ async fn restore(
         return Ok(replay);
     }
 
-    // Original per-bucket debits (in consumption order).
-    let debits = sqlx::query(
-        "SELECT bucket_id, amount FROM ledger_entries
-          WHERE transaction_id = $1 AND kind = 'payment' ORDER BY seq",
-    )
-    .bind(payment_txn_id)
-    .fetch_all(&mut *tx)
-    .await?;
-
-    // Amount already restored to each bucket by prior refunds/reversals.
-    let mut already_by_bucket: HashMap<Uuid, i64> = HashMap::new();
-    let ref_rows = sqlx::query(
-        "SELECT le.bucket_id, COALESCE(SUM(le.amount), 0)::bigint AS refunded
-           FROM ledger_entries le
-           JOIN transactions t ON t.id = le.transaction_id
-          WHERE t.related_txn_id = $1 AND le.kind IN ('refund', 'reversal')
-          GROUP BY le.bucket_id",
-    )
-    .bind(payment_txn_id)
-    .fetch_all(&mut *tx)
-    .await?;
-    for r in ref_rows {
-        if let Some(b) = r.try_get::<Option<Uuid>, _>("bucket_id")? {
-            already_by_bucket.insert(b, r.try_get("refunded")?);
-        }
-    }
-
-    // Restore in reverse consumption order, capped per bucket at what it still
-    // owes. The original expiry is preserved (we never touch expires_at).
-    let mut remaining_to_refund = refund_amount;
     let mut restorations = Vec::new();
-    for r in debits.into_iter().rev() {
-        if remaining_to_refund == 0 {
-            break;
-        }
-        let bucket_id: Uuid = r.try_get("bucket_id")?;
-        let debited = -r.try_get::<i64, _>("amount")?;
-        let bucket_refundable = debited - already_by_bucket.get(&bucket_id).copied().unwrap_or(0);
-        let d = remaining_to_refund.min(bucket_refundable);
-        if d > 0 {
-            sqlx::query("UPDATE topup_buckets SET remaining_amount = remaining_amount + $1, status = 'active' WHERE id = $2")
-                .bind(d)
-                .bind(bucket_id)
-                .execute(&mut *tx)
-                .await?;
-            sqlx::query(
-                "INSERT INTO ledger_entries (id, system_code, idm, idi, transaction_id, bucket_id, kind, amount, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-            )
-            .bind(Uuid::now_v7())
-            .bind(sc)
-            .bind(idm)
-            .bind(idi)
-            .bind(txn_id)
+    for (bucket_id, restore_amt) in plan {
+        sqlx::query("UPDATE topup_buckets SET remaining_amount = remaining_amount + $1, status = 'active' WHERE id = $2")
+            .bind(restore_amt)
             .bind(bucket_id)
-            .bind(kind)
-            .bind(d)
-            .bind(to_odt(now))
             .execute(&mut *tx)
             .await?;
-            restorations.push(Deduction {
-                bucket_id,
-                amount: Yen::new(d),
-            });
-            remaining_to_refund -= d;
-        }
+        sqlx::query(
+            "INSERT INTO ledger_entries (id, system_code, idm, idi, transaction_id, bucket_id, kind, amount, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(sc)
+        .bind(idm)
+        .bind(idi)
+        .bind(txn_id)
+        .bind(bucket_id)
+        .bind(kind)
+        .bind(restore_amt)
+        .bind(to_odt(now))
+        .execute(&mut *tx)
+        .await?;
+        restorations.push(Deduction {
+            bucket_id,
+            amount: Yen::new(restore_amt),
+        });
     }
 
     let bal = balance(&mut *tx, account, now).await?;
