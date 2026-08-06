@@ -1435,10 +1435,12 @@ async fn restore(
         });
     }
 
-    // Original per-bucket debits, in consumption order.
+    // Original per-bucket debits, in consumption order, with each bucket's
+    // expiry so the plan below can refuse an already-expired one.
     let debits = sqlx::query(
-        "SELECT bucket_id, amount FROM ledger_entries
-          WHERE transaction_id = $1 AND kind = 'payment' ORDER BY seq",
+        "SELECT le.bucket_id, le.amount, tb.expires_at FROM ledger_entries le
+           JOIN topup_buckets tb ON tb.id = le.bucket_id
+          WHERE le.transaction_id = $1 AND le.kind = 'payment' ORDER BY le.seq",
     )
     .bind(payment_txn_id)
     .fetch_all(&mut *tx)
@@ -1464,7 +1466,10 @@ async fn restore(
 
     // Plan the restoration in reverse consumption order, capped per bucket at
     // what it still owes, before writing anything. The original expiry is
-    // preserved (we never touch expires_at).
+    // preserved (we never touch expires_at), and an already-expired bucket is
+    // refused: balance() filters on `expires_at > now`, so reviving one would
+    // hide the restored value from the holder while letting the next sweep
+    // forfeit it a second time.
     let mut remaining_to_refund = refund_amount;
     let mut plan: Vec<(Uuid, i64)> = Vec::new();
     for r in debits.into_iter().rev() {
@@ -1476,6 +1481,10 @@ async fn restore(
         let bucket_refundable = debited - already_by_bucket.get(&bucket_id).copied().unwrap_or(0);
         let restore_amt = remaining_to_refund.min(bucket_refundable);
         if restore_amt > 0 {
+            let expires_at = to_jiff(r.try_get("expires_at")?);
+            if expires_at <= now {
+                return Err(DbError::RefundIntoExpiredBucket { bucket_id });
+            }
             plan.push((bucket_id, restore_amt));
             remaining_to_refund -= restore_amt;
         }

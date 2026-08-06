@@ -45,6 +45,8 @@ pub enum DbError {
     PaymentNotFound,
     #[error("refund of {requested} exceeds the {refundable} still refundable on this payment")]
     RefundExceedsPayment { requested: Yen, refundable: Yen },
+    #[error("cannot restore value to bucket {bucket_id}: it has already expired")]
+    RefundIntoExpiredBucket { bucket_id: uuid::Uuid },
     #[error(transparent)]
     Expiry(#[from] ExpiryError),
     #[error(transparent)]

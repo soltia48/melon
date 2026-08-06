@@ -526,6 +526,47 @@ async fn concurrent_refunds_never_over_refund(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn refund_does_not_resurrect_an_expired_bucket(pool: PgPool) {
+    let a = acct(29);
+    let m = ops::create_merchant(&pool, "m-exp-refund", "Expired Refund Test", 0, 10_000_000)
+        .await
+        .unwrap();
+    let t0 = ts("2026-01-15T09:00:00+09:00"); // bucket expires 2026-07-15
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
+        .await
+        .unwrap();
+    let pay = ops::pay(&pool, a, m, None, yen(400), "p", None, t0)
+        .await
+        .unwrap();
+
+    // The bucket's ¥600 leftover is swept as breakage after it expires.
+    let after = ts("2026-08-01T00:00:00+09:00");
+    let swept = ops::expire_due(&pool, after, 100).await.unwrap();
+    assert_eq!(swept.expired_buckets, 1);
+    assert_eq!(swept.expired_amount, Yen::new(600));
+
+    // A late refund must not flip the swept bucket back to 'active' with a past
+    // expiry: balance() would still hide the value, but the next sweep would
+    // forfeit the same ¥400 a second time.
+    let refund_result = ops::refund(&pool, pay.transaction_id, Some(yen(400)), "r", after).await;
+    assert!(
+        matches!(
+            refund_result,
+            Err(melon_db::DbError::RefundIntoExpiredBucket { .. })
+        ),
+        "expected RefundIntoExpiredBucket, got {refund_result:?}"
+    );
+    assert_eq!(
+        ops::balance(&pool, a, after).await.unwrap().total,
+        Yen::new(0)
+    );
+
+    // Re-sweeping must find nothing further to forfeit — no double count.
+    let second_sweep = ops::expire_due(&pool, after, 100).await.unwrap();
+    assert_eq!(second_sweep.expired_amount, Yen::new(0));
+}
+
+#[sqlx::test]
 async fn sweep_forfeits_expired_and_is_idempotent(pool: PgPool) {
     let a = acct(15);
     let t0 = ts("2026-01-15T09:00:00+09:00"); // expires 2026-07-15

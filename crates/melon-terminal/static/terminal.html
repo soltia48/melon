@@ -871,6 +871,8 @@
             };
           case "REFUND_EXCEEDS_PAYMENT":
             return { title: "返金できません", sub: "返金可能額を超えています" };
+          case "REFUND_INTO_EXPIRED_BUCKET":
+            return { title: "返金できません", sub: "元の残高が失効しています" };
           case "SYSTEM_NOT_SUPPORTED":
           // The server refused the card: its IDm is randomized, so it can never
           // identify an account. Same dead end for the cashier as an unsupported
