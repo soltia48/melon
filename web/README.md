@@ -12,7 +12,7 @@ Melon の**フロントエンド**(React / Next.js)。発行者向け**管理画
 
 melon-server のセッションは **HttpOnly・SameSite=Strict の Cookie** です。フロント
 を別オリジンに置くと、この Cookie はクロスサイトで送出されず、CORS も必要になります。
-そこで [`middleware.ts`](./middleware.ts) が **`/v1/*` と `/healthz` を同一オリジンの
+そこで [`proxy.ts`](./proxy.ts) が **`/v1/*` と `/healthz` を同一オリジンの
 まま API へリバースプロキシ**します。ブラウザから見た通信相手は常にこのフロント自身の
 オリジンだけなので、Cookie はファーストパーティのまま流れ、**API 側は無変更**で済みます。
 
@@ -23,7 +23,7 @@ melon-server のセッションは **HttpOnly・SameSite=Strict の Cookie** で
 ```
 
 プロキシ先は環境変数 **`MELON_API_ORIGIN`**(既定 `http://127.0.0.1:8080`)。
-`middleware.ts` が**リクエスト時に**読むため、1 つのビルド/イメージをどの環境でも使えます。
+`proxy.ts` が**リクエスト時に**読むため、1 つのビルド/イメージをどの環境でも使えます。
 
 ## 開発
 
@@ -95,7 +95,7 @@ lib/
   api.ts                fetch ラッパ(credentials:'include' + Idempotency-Key)
   types.ts              API レスポンス型
   format.ts             円・hex・日時整形
-middleware.ts           /v1・/healthz を API へプロキシ
+proxy.ts                /v1・/healthz を API へプロキシ
 ```
 
 セッショントークンは JavaScript から一切触れません(HttpOnly Cookie をブラウザが自動送出)。

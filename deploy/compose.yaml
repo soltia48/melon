@@ -17,7 +17,7 @@
 #
 # The React front-end (`web`, Next.js) serves the admin/merchant UI and
 # reverse-proxies /v1 and /healthz to `server`, so everything the browser sees
-# is one origin and the session cookie flows unchanged (see web/middleware.ts).
+# is one origin and the session cookie flows unchanged (see web/proxy.ts).
 # Terminals also reach the API through the same public hostname (/v1 is proxied).
 #
 # NO INBOUND PORTS. cloudflared dials *out* to Cloudflare, so nothing here
@@ -135,7 +135,7 @@ services:
     logging: *logging
 
   # React/Next.js front-end: serves the admin console and merchant portal, and
-  # reverse-proxies /v1 and /healthz to `server` (web/middleware.ts) so the
+  # reverse-proxies /v1 and /healthz to `server` (web/proxy.ts) so the
   # browser stays on one origin and the session cookie is unchanged.
   web:
     image: melon-web:${MELON_VERSION:-latest}
@@ -148,7 +148,7 @@ services:
         condition: service_healthy
     environment:
       # The API address on the internal network (the compose service name), read
-      # per request by the middleware — NOT localhost.
+      # per request by the proxy — NOT localhost.
       MELON_API_ORIGIN: http://server:8080
       NODE_ENV: production
     # Reachable only by cloudflared, on the internal network.

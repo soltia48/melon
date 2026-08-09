@@ -30,8 +30,10 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []) {
     } finally {
       setLoading(false);
     }
-    // fn identity intentionally excluded; callers pass real deps below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // fn identity intentionally excluded; callers pass real deps below. `deps` is
+    // this hook's parameter rather than an array literal, which the lint rules
+    // cannot analyse statically — that is inherent to forwarding a caller's deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/use-memo
   }, deps);
 
   useEffect(() => {

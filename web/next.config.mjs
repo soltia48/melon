@@ -1,7 +1,7 @@
 // @ts-check
 
 /**
- * The front-end never talks to the API cross-origin. `middleware.ts` proxies
+ * The front-end never talks to the API cross-origin. `proxy.ts` proxies
  * /v1/* and /healthz to the API under the SAME origin the browser loaded the app
  * from, so the melon-server session cookie (HttpOnly, SameSite=Strict) keeps
  * flowing untouched — the API needs no CORS and no cookie changes. The API

@@ -7,13 +7,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "marked": "^18.0.6",
     "marked-cjk-friendly": "^0.1.0",
-    "next": "15.5.21",
+    "next": "16.3.0",
     "react": "19.2.7",
     "react-dom": "19.2.7"
   },
@@ -21,6 +21,8 @@
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.0",
     "typescript": "^5.9"
   }
 }

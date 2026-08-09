@@ -5,7 +5,7 @@
 #   docker build -t melon-web web/
 #
 # At runtime, set MELON_API_ORIGIN to the API's address (read per request by
-# middleware.ts, so one image serves any environment).
+# proxy.ts, so one image serves any environment).
 
 # ---------- deps ----------
 FROM node:22-bookworm-slim AS deps

@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const config = { matcher: ["/v1/:path*", "/healthz"] };
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const origin = process.env.MELON_API_ORIGIN || "http://127.0.0.1:8080";
   const target = new URL(req.nextUrl.pathname + req.nextUrl.search, origin);
   return NextResponse.rewrite(target);
