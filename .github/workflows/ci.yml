@@ -63,18 +63,6 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
 
-      - name: Authorize the private felica-rs dependency
-        env:
-          FELICA_RS_TOKEN: ${{ secrets.FELICA_RS_TOKEN }}
-        run: |
-          if [ -z "$FELICA_RS_TOKEN" ]; then
-            echo "::error::FELICA_RS_TOKEN secret is not set — cannot fetch the private felica-rs crate." >&2
-            exit 1
-          fi
-          git config --global \
-            url."https://x-access-token:${FELICA_RS_TOKEN}@github.com/".insteadOf \
-            "ssh://git@github.com/"
-
       - name: Format check
         run: cargo fmt --all --check
 

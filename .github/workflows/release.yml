@@ -50,21 +50,6 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Authorize the private felica-rs dependency
-        shell: bash
-        env:
-          FELICA_RS_TOKEN: ${{ secrets.FELICA_RS_TOKEN }}
-        run: |
-          if [ -z "$FELICA_RS_TOKEN" ]; then
-            echo "::error::FELICA_RS_TOKEN secret is not set — cannot fetch the private felica-rs crate." >&2
-            exit 1
-          fi
-          # Cargo fetches felica-rs from ssh://git@github.com/… ; rewrite that to an
-          # HTTPS URL carrying the token so the build works with no SSH agent.
-          git config --global \
-            url."https://x-access-token:${FELICA_RS_TOKEN}@github.com/".insteadOf \
-            "ssh://git@github.com/"
-
       - name: Build
         shell: bash
         env:
