@@ -93,7 +93,7 @@ DATABASE_URL=postgres://melon:melon@127.0.0.1:5433/melon cargo test --workspace
 
 ## デプロイ
 
-- [`Dockerfile`](Dockerfile) — `melon-server` の本番イメージ(プライベート依存 `felica-rs` を SSH で取得)。
+- [`Dockerfile`](Dockerfile) — `melon-server` の本番イメージ。
 - [`web/Dockerfile`](web/Dockerfile) — フロントエンドの本番イメージ。
 - [`deploy/compose.yaml`](deploy/compose.yaml) — `server` + `web` + `cloudflared` を Cloudflare Tunnel 経由で公開。**リバースプロキシ不要・インバウンドポートなし**。手順は `deploy/` を参照。
 
@@ -101,8 +101,6 @@ DATABASE_URL=postgres://melon:melon@127.0.0.1:5433/melon cargo test --workspace
 
 - [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — push / PR ごとに `fmt` + `clippy` + `test`(PostgreSQL サービス上で全ワークスペース)。
 - [`.github/workflows/release.yml`](.github/workflows/release.yml) — `v*` タグの push で `melon-terminal` を **Linux(x86_64・arm64)/ Windows(x86_64)/ macOS(Apple Silicon)** 向けにビルドし、Release に添付。
-
-いずれもプライベート依存 `felica-rs` を取得するため、リポジトリシークレット **`FELICA_RS_TOKEN`**(`soltia48/felica-rs` を読める PAT)が必要です。
 
 ## ドキュメント
 

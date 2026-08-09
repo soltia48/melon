@@ -1,10 +1,4 @@
 # Format check, clippy, and the full test suite on every push and pull request.
-#
-# Like the release workflow, this needs the **FELICA_RS_TOKEN** repository secret
-# to fetch the private `felica-rs` git dependency (see .github/workflows/release.yml
-# for how to create it). Pull requests from forks don't get repository secrets, so
-# they can't fetch felica-rs and this workflow will fail for them — expected for a
-# private dependency.
 
 name: ci
 
@@ -45,8 +39,7 @@ jobs:
 
     env:
       DATABASE_URL: postgres://melon:melon@localhost:5432/melon
-      # felica-rs is a git dep behind the insteadOf rewrite below; fetch it with
-      # the system git client (also set in .cargo/config.toml).
+      # Fetch git deps with the system git client (also set in .cargo/config.toml).
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
     steps:

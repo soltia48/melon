@@ -2,8 +2,6 @@
 #
 # melon-web — production image for the React/Next.js front-end.
 #
-# A plain public front-end: no private deps, no SSH needed at build time.
-#
 #   docker build -t melon-web web/
 #
 # At runtime, set MELON_API_ORIGIN to the API's address (read per request by

@@ -2,28 +2,18 @@
 #
 # melon-server — production image.
 #
-# It depends on the PRIVATE git crate `felica-rs`, fetched over SSH at build time.
-# Build with BuildKit and forward your SSH agent:
-#
-#   DOCKER_BUILDKIT=1 docker build --ssh default -t melon-server .
-#   (or `docker compose build`, which forwards the agent via deploy/compose.yaml)
-#
 # `deploy/compose.yaml` sets `context: ..` (the repo root, since deploy/ is inside
-# it). The build host must have an ssh-agent with a key authorized for the repo.
+# it).
 
 # ---------- builder ----------
 FROM rust:1-bookworm AS builder
 
-# cmake/clang: aws-lc-rs (rustls, via sqlx). git/openssh-client: fetch felica-rs.
+# cmake/clang: aws-lc-rs (rustls, via sqlx). git: fetch git dependencies.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        cmake clang pkg-config git openssh-client ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p -m 0700 /root/.ssh \
-    && ssh-keyscan github.com >> /root/.ssh/known_hosts
+        cmake clang pkg-config git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-# Fetch git deps with the system git client so the forwarded SSH agent is used
-# (libgit2's SSH auth is limited). The felica-rs URL is already `ssh://…`, so no
-# https→ssh rewrite is needed.
+# Fetch git deps with the system git client, matching `.cargo/config.toml`.
 ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 WORKDIR /src
@@ -31,10 +21,8 @@ COPY . .
 
 # Build ONLY the server: a workspace-wide build would union felica-rs's `usb`
 # feature (enabled by melon-terminal) and link rusb/libusb into the server.
-# `--locked` makes the build reproducible from Cargo.lock. `--mount=type=ssh`
-# exposes the forwarded agent to the `cargo build` (and thus to git).
-RUN --mount=type=ssh \
-    cargo build --release --locked -p melon-server \
+# `--locked` makes the build reproducible from Cargo.lock.
+RUN cargo build --release --locked -p melon-server \
     && strip target/release/melon-server
 
 # ---------- runtime ----------

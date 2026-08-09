@@ -167,7 +167,7 @@ cargo run -p melon-server     # 起動時に管理者ユーザーを作成
 
 PaSoRi(Sony RC-S380 等)を駆動しフレームを中継する加盟店端末。**要 USB リーダ + 実カード**。2 モードあり、リーダ/相互認証中継/サーバ呼び出しの共通ロジックはライブラリ(`melon_terminal`)を共有します。**モードは引数で決まります**:操作(`--op` または `--amount`)を指定すると CLI 一発実行、指定しなければ **Web UI キオスク(デフォルト)**。
 
-> **ビルド済みバイナリ**: `v*` タグを push すると GitHub Actions([.github/workflows/release.yml](../.github/workflows/release.yml))が Linux(x86_64 / arm64)・Windows(x86_64)・macOS(Apple Silicon)向けにビルドし、その Release にアーカイブを添付します。libusb はバンドル(vendored)するため実行環境に libusb のインストールは不要です。CI がプライベート依存 `felica-rs` を取得するため、リポジトリに **`FELICA_RS_TOKEN`** シークレット(`soltia48/felica-rs` を読める PAT)が必要です。
+> **ビルド済みバイナリ**: `v*` タグを push すると GitHub Actions([.github/workflows/release.yml](../.github/workflows/release.yml))が Linux(x86_64 / arm64)・Windows(x86_64)・macOS(Apple Silicon)向けにビルドし、その Release にアーカイブを添付します。libusb はバンドル(vendored)するため実行環境に libusb のインストールは不要です。
 
 **① Web UI キオスク(デフォルト)** — 操作フラグなしで起動すると、リーダを占有する常駐プロセスがローカル Web UI とローカル JSON API を**同一 `http://localhost` オリジン**で提供(CORS/mixed-content 回避)。**起動時にデフォルトブラウザで UI を自動的に開きます**(`--no-open` で抑止)。タッチ操作で決済・チャージ・残高照会:
 
@@ -287,12 +287,6 @@ DB・管理者パスワード・FeliCa 鍵は**ファイル**で渡し、環境�
 - **⚠️ 単一インスタンス**。FeliCa 相互認証セッションは**サーバのメモリ上**にあるため、カードのタップと後続の金銭操作は**同一プロセス**に届く必要があります。`replicas: 1` を上げるとセッションアフィニティ無しでは**決済が全て失敗**します(台帳は PostgreSQL なのでスケール自体は将来可能)。
 - **⚠️ Cookie は `Secure` のまま**。TLS は Cloudflare のエッジで終端されるため、cloudflared → server 間が平文 HTTP でも**ブラウザから見れば HTTPS** です。「コンテナが HTTP だから」と `MELON_COOKIE_SECURE` を false にしてはいけません。
 - **⚠️ セキュリティヘッダはサーバが付与**。リバースプロキシが無いので、HSTS / CSP / X-Frame-Options / X-Content-Type-Options / Referrer-Policy は **melon-server 自身**が全レスポンスに付けます(HSTS は `MELON_COOKIE_SECURE=true` のときだけ — 平文 HTTP の開発ホストに HSTS を焼き付けないため)。
-- **⚠️ felica-rs はプライベート git 依存。ビルド時に SSH で取得します**(vendor しません)。`docker compose build` が **SSH エージェントを転送**(BuildKit の `--mount=type=ssh`)するので、ビルドホストで **ssh-agent にリポジトリ権限のある鍵を登録**しておく必要があります:
-  ```bash
-  eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519   # 鍵を登録
-  cd deploy && docker compose build                      # SSH で felica-rs を取得
-  ```
-  ローカルの `cargo build` も同様に SSH で取得します(`.cargo/config.toml` の `git-fetch-with-cli = true`)。rev は `Cargo.toml` で固定(usb feature コミット)。Docker コンテキストは `deploy/` の親=リポジトリ直下(`context: ..`)。
 - サーバは **`-p melon-server` のみ**をビルド(ワークスペース全体だと端末の `usb` feature が統合され rusb がリンクされる)。
 
 ### 運用メモ

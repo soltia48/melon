@@ -19,7 +19,7 @@ melon-api-types = { path = "crates/melon-api-types" }
 # The rev is pinned to the commit that adds the `usb` feature flag.
 # The oracle/server use `default-features = false` (crypto/protocol only, no
 # rusb); the terminal enables `features = ["usb"]`.
-felica-rs = { git = "https://git@github.com/soltia48/felica-rs.git", branch = "main", default-features = false }
+felica-rs = { git = "https://github.com/soltia48/felica-rs.git", branch = "main", default-features = false }
 
 # --- domain / time / money ---
 jiff = { version = "0.2", features = ["serde"] }

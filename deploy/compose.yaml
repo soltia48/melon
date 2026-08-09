@@ -73,10 +73,6 @@ services:
       # The repo root (deploy/ lives inside it).
       context: ..
       dockerfile: Dockerfile
-      # Forward the SSH agent so the private `felica-rs` git dependency can be
-      # fetched at build time (requires BuildKit; use `docker compose build`).
-      ssh:
-        - default
     restart: unless-stopped
     depends_on:
       db:
@@ -140,8 +136,7 @@ services:
 
   # React/Next.js front-end: serves the admin console and merchant portal, and
   # reverse-proxies /v1 and /healthz to `server` (web/middleware.ts) so the
-  # browser stays on one origin and the session cookie is unchanged. A plain
-  # public image — no private deps, no SSH needed at build time.
+  # browser stays on one origin and the session cookie is unchanged.
   web:
     image: melon-web:${MELON_VERSION:-latest}
     build:

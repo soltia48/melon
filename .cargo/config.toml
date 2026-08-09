@@ -1,5 +1,5 @@
-# Fetch the private `felica-rs` git dependency with the system git client, so it
-# uses your configured GitHub credentials (SSH agent) instead of libgit2's limited
-# auth. The Dockerfile sets the same via CARGO_NET_GIT_FETCH_WITH_CLI + an SSH mount.
+# Fetch git dependencies with the system git client, so they honour your git
+# configuration (proxies, URL rewrites, credential helpers) instead of libgit2's
+# limited handling. The Dockerfile sets CARGO_NET_GIT_FETCH_WITH_CLI.
 [net]
 git-fetch-with-cli = true

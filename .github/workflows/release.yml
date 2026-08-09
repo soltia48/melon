@@ -4,14 +4,7 @@
 # Targets: Linux x86_64, Linux arm64, Windows x86_64 and macOS arm64
 # (Apple Silicon) — each built natively on its own runner.
 #
-# ── Required secret ────────────────────────────────────────────────────────────
-# `felica-rs` is a PRIVATE git dependency (ssh://git@github.com/soltia48/felica-rs).
-# CI can't use your SSH agent, so it fetches it over HTTPS with a token. Add a
-# repository secret named **FELICA_RS_TOKEN**:
-#   • a fine-grained PAT with *Read* access to `soltia48/felica-rs` (Contents), or
-#   • any token/PAT whose account can read that repo.
-# Without it, the build fails at the `felica-rs` fetch. (libusb is vendored, so no
-# other system dependency or secret is needed.)
+# libusb is vendored, so no system dependency is needed on any runner.
 
 name: release
 
@@ -53,8 +46,8 @@ jobs:
       - name: Build
         shell: bash
         env:
-          # felica-rs is a git dep behind the insteadOf rewrite above; fetch it with
-          # the system git client (also set in .cargo/config.toml, belt-and-suspenders).
+          # Fetch git deps with the system git client (also set in
+          # .cargo/config.toml, belt-and-suspenders).
           CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         run: |
           cargo build --release --locked \

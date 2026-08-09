@@ -244,7 +244,9 @@ pub fn card_system_codes(
         .as_slice()
         .try_into()
         .map_err(|_| anyhow!("card returned an IDm that is not 8 bytes"))?;
-    let frame = FelicaStandardCommand::RequestSystemCode { idm }.to_frame();
+    let frame = FelicaStandardCommand::RequestSystemCode { idm }
+        .to_frame()
+        .map_err(|e| anyhow!("failed to build Request System Code: {e}"))?;
     let timeout_ms = poll.request_system_code_timeout_ms();
     debug!(frame = %hex::encode(&frame), timeout_ms, "→ card: Request System Code");
     let response = reader
