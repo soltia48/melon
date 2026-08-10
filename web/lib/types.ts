@@ -158,9 +158,12 @@ export interface AdminRefundable {
 
 export interface RefundResp {
   transaction_id: string;
-  payment_txn_id: string;
+  payment_id: string;
   amount: number;
   balance: number;
+  restorations: { bucket_id: string; amount: number }[];
+  /** Buckets whose value had already expired — void only, always empty for a refund. */
+  expired: { bucket_id: string; amount: number }[];
   replayed: boolean;
 }
 
