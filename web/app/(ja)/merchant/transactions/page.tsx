@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { api, qs } from "@/lib/api";
-import type { MerchantTxn, Store } from "@/lib/types";
+import type { MerchantTxn, RefundResp, Store } from "@/lib/types";
 import { fmtTime, shortId, yen } from "@/lib/format";
 import { Async, useAsync, errMsg } from "@/components/ui";
 import { useToast } from "@/components/toast";
@@ -53,10 +53,15 @@ export default function MerchantTransactionsPage() {
   const voidPayment = async (paymentId: string) => {
     if (!confirm("この支払いを取り消します(全額)。よろしいですか?")) return;
     try {
-      const r = await api.post<{ amount: number }>(
+      const r = await api.post<RefundResp>(
         `/v1/payments/${encodeURIComponent(paymentId)}/void`,
       );
-      toast(`取り消しました: ${yen(r.amount)}`);
+      const expired = r.expired.reduce((sum, d) => sum + d.amount, 0);
+      toast(
+        expired > 0
+          ? `取り消しました: ${yen(r.amount)}(うち ${yen(expired)} は失効済みのため復元されません)`
+          : `取り消しました: ${yen(r.amount)}`,
+      );
       state.reload();
     } catch (e) {
       toast(errMsg(e));

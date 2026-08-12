@@ -7,6 +7,7 @@ import type {
   AdminBalance,
   AdminRefundable,
   AdminTxn,
+  RefundResp,
 } from "@/lib/types";
 import { fmtTime, scHex, yen } from "@/lib/format";
 import { Async, useAsync, errMsg } from "@/components/ui";
@@ -213,10 +214,15 @@ function AccountDetail({
   const voidPayment = async (paymentId: string) => {
     if (!confirm("この支払いを全額取消しますか?")) return;
     try {
-      const r = await api.post<{ amount: number }>(
+      const r = await api.post<RefundResp>(
         `/v1/admin/payments/${encodeURIComponent(paymentId)}/void`,
       );
-      toast(`取消しました: ${yen(r.amount)}`);
+      const expired = r.expired.reduce((sum, d) => sum + d.amount, 0);
+      toast(
+        expired > 0
+          ? `取消しました: ${yen(r.amount)}(うち ${yen(expired)} は失効済みのため復元されません)`
+          : `取消しました: ${yen(r.amount)}`,
+      );
       refresh();
     } catch (e) {
       toast(errMsg(e));
