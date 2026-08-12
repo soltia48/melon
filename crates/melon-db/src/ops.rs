@@ -1436,11 +1436,14 @@ async fn restore(
     }
 
     // Original per-bucket debits, in consumption order, with each bucket's
-    // expiry so the plan below can refuse an already-expired one.
+    // expiry for the plan below. Locked in `le.seq` order (the same order
+    // `pay()` takes, so no new deadlock cycle): `expire_due()` sweeps with
+    // `SKIP LOCKED`, so an unlocked `expires_at` could go stale before use.
     let debits = sqlx::query(
         "SELECT le.bucket_id, le.amount, tb.expires_at FROM ledger_entries le
            JOIN topup_buckets tb ON tb.id = le.bucket_id
-          WHERE le.transaction_id = $1 AND le.kind = 'payment' ORDER BY le.seq",
+          WHERE le.transaction_id = $1 AND le.kind = 'payment' ORDER BY le.seq
+          FOR UPDATE OF tb",
     )
     .bind(payment_txn_id)
     .fetch_all(&mut *tx)

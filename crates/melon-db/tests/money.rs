@@ -11,6 +11,7 @@ use melon_core::idm::Idm;
 use melon_core::money::{PositiveYen, Yen};
 use melon_db::ops;
 use sqlx::PgPool;
+use std::time::Duration;
 
 /// A fixed test IDm (cards in this deployment have a stable IDm).
 const IDM: [u8; 8] = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
@@ -564,6 +565,71 @@ async fn refund_does_not_resurrect_an_expired_bucket(pool: PgPool) {
     // Re-sweeping must find nothing further to forfeit — no double count.
     let second_sweep = ops::expire_due(&pool, after, 100).await.unwrap();
     assert_eq!(second_sweep.expired_amount, Yen::new(0));
+}
+
+#[sqlx::test]
+async fn refund_locks_the_buckets_it_restores(pool: PgPool) {
+    let a = acct(30);
+    let m = ops::create_merchant(&pool, "m-lock-refund", "Refund Lock Test", 0, 10_000_000)
+        .await
+        .unwrap();
+    let t0 = ts("2026-01-15T09:00:00+09:00");
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
+        .await
+        .unwrap();
+    let pay = ops::pay(&pool, a, m, None, yen(400), "p", None, t0)
+        .await
+        .unwrap();
+    let bucket_id = pay.deductions[0].bucket_id;
+
+    // Stand in for a concurrent `expire_due()` sweep that has the bucket row
+    // locked but hasn't committed yet.
+    let mut holder = pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM topup_buckets WHERE id = $1 FOR UPDATE")
+        .bind(bucket_id)
+        .fetch_one(&mut *holder)
+        .await
+        .unwrap();
+
+    let payment_id = pay.transaction_id;
+    let refunder = pool.clone();
+    let refund =
+        tokio::spawn(
+            async move { ops::refund(&refunder, payment_id, Some(yen(400)), "r", t0).await },
+        );
+
+    // Wait for a backend blocked on a lock inside the planning SELECT, which
+    // its `FOR UPDATE OF tb` clause identifies. Timing out on refund() itself
+    // would not distinguish this from blocking on the later UPDATE, which
+    // needs the same lock either way.
+    let mut waiting_on_select = false;
+    for _ in 0..40 {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity
+              WHERE wait_event_type = 'Lock' AND query ILIKE '%FOR UPDATE OF tb%'
+                AND datname = current_database()",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        if count > 0 {
+            waiting_on_select = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        waiting_on_select,
+        "refund's restoration-planning SELECT never showed up waiting on the bucket lock"
+    );
+
+    holder.rollback().await.unwrap();
+    let out = refund.await.unwrap().unwrap();
+    assert_eq!(out.amount, Yen::new(400));
+    assert_eq!(
+        ops::balance(&pool, a, t0).await.unwrap().total,
+        Yen::new(1000)
+    );
 }
 
 #[sqlx::test]
