@@ -1354,7 +1354,9 @@ struct PlannedRestoration {
 
 /// Refund up to `amount` (or the full refundable remainder when `None`) of a
 /// payment, restoring value to the **original buckets with their original
-/// expiry** — never extending validity. Idempotent on `idempotency_key`.
+/// expiry** — never extending validity. Rejected with
+/// [`DbError::RefundIntoExpiredBucket`] if the restoration would reach a bucket
+/// that has already expired. Idempotent on `idempotency_key`.
 pub async fn refund(
     pool: &Pool,
     payment_txn_id: Uuid,
@@ -1374,9 +1376,9 @@ pub async fn refund(
     .await
 }
 
-/// Fully reverse a payment (same-day void). Like a full refund but recorded as a
-/// technical `reversal`, and value in an already-expired bucket is forfeited
-/// rather than refused. Idempotent on `idempotency_key`.
+/// Fully reverse a payment, with no time limit. Like a full refund but recorded
+/// as a technical `reversal`, and value in an already-expired bucket is
+/// forfeited rather than refused. Idempotent on `idempotency_key`.
 pub async fn void(
     pool: &Pool,
     payment_txn_id: Uuid,
@@ -1508,9 +1510,10 @@ async fn restore(
 
     // Plan the restoration in reverse consumption order, capped per bucket at
     // what it still owes, before writing anything. The original expiry is
-    // preserved (we never touch expires_at). Reviving an expired bucket would
-    // hide the value from the holder (balance() filters on `expires_at > now`)
-    // and let the next sweep forfeit it twice, so a refund refuses it.
+    // preserved (we never touch expires_at). Restoring into an expired bucket
+    // would hand back value the holder can never spend (balance() filters on
+    // `expires_at > now`) and, once the sweep has run, flip a swept row back
+    // to 'active' behind its own `expiry` posting, so a refund refuses it.
     let mut remaining_to_refund = refund_amount;
     let mut plan: Vec<PlannedRestoration> = Vec::new();
     for r in debits.into_iter().rev() {

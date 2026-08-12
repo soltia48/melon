@@ -117,7 +117,7 @@ impl From<DbError> for ApiError {
             ),
             DbError::RefundIntoExpiredBucket { bucket_id } => ApiError::unprocessable(
                 "REFUND_INTO_EXPIRED_BUCKET",
-                "this payment's value already expired and cannot be refunded",
+                "refund would restore into an already-expired bucket",
             )
             .with_details(json!({ "bucket_id": bucket_id })),
             DbError::IdempotencyConflict => ApiError::new(
