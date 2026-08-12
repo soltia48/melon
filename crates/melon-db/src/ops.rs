@@ -1832,14 +1832,16 @@ pub struct RefundablePayment {
     pub fee: Yen,
     /// Already refunded/reversed against this payment.
     pub refunded: Yen,
-    /// Still refundable: `amount − refunded` (always > 0 here).
+    /// Still refundable: `amount − refunded` (always > 0 here). Transaction
+    /// level only — see [`list_refundable_payments`].
     pub refundable: Yen,
     pub occurred_at: Timestamp,
 }
 
 /// List payments that still have a positive refundable remainder, newest first.
 /// Optionally scoped to a merchant and/or an account. `limit` is clamped to
-/// `1..=200` (default 50).
+/// `1..=200` (default 50). Bucket expiry is not considered, so a listed payment
+/// can still be turned away with [`DbError::RefundIntoExpiredBucket`].
 pub async fn list_refundable_payments(
     pool: &Pool,
     merchant_id: Option<Uuid>,

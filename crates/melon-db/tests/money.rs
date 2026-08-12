@@ -1403,3 +1403,45 @@ async fn partial_refund_below_the_expired_slice_succeeds(pool: PgPool) {
         "the live bucket is whole again; the expired one stays invisible"
     );
 }
+
+#[sqlx::test]
+async fn refundable_list_still_shows_payments_whose_buckets_expired(pool: PgPool) {
+    let a = acct(86);
+    let m = ops::create_merchant(
+        &pool,
+        "m-refundable-expired",
+        "Refundable Expired Test",
+        0,
+        10_000_000,
+    )
+    .await
+    .unwrap();
+    let t0 = ts("2026-01-15T09:00:00+09:00");
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
+        .await
+        .unwrap();
+    let pay = ops::pay(&pool, a, m, None, yen(400), "p", None, t0)
+        .await
+        .unwrap();
+
+    let after = ts("2026-08-01T00:00:00+09:00");
+    ops::expire_due(&pool, after, 100).await.unwrap();
+
+    // The list is transaction-level only, so the payment still appears with its
+    // full remainder; the refund itself is what turns it away.
+    let listed = ops::list_refundable_payments(&pool, Some(m), Some(a), 50)
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, pay.transaction_id);
+    assert_eq!(listed[0].refundable, Yen::new(400));
+
+    let result = ops::refund(&pool, pay.transaction_id, Some(yen(400)), "r", after).await;
+    assert!(
+        matches!(
+            result,
+            Err(melon_db::DbError::RefundIntoExpiredBucket { .. })
+        ),
+        "expected RefundIntoExpiredBucket, got {result:?}"
+    );
+}
