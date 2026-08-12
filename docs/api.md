@@ -146,7 +146,8 @@
 
 ```json
 { "transaction_id": "…", "payment_id": "…", "amount": 100,
-  "balance": 800, "restorations": [ { "bucket_id": "…", "amount": 100 } ], "replayed": false }
+  "balance": 800, "restorations": [ { "bucket_id": "…", "amount": 100 } ],
+  "expired": [], "replayed": false }
 ```
 過剰返金は **422 `REFUND_EXCEEDS_PAYMENT`**。元決済のバケットが既に失効している場合は **422 `REFUND_INTO_EXPIRED_BUCKET`**(失効した価値は復元できず、返金は部分的にも成立せず全体が拒否される)。自店の支払いのみ操作可(他店は 404)。
 
