@@ -7,7 +7,7 @@
 //! — so concurrent payments on one account are serialized and can never
 //! overspend. Idempotency is enforced by `UNIQUE (kind, idempotency_key)`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use jiff::{Timestamp, tz::TimeZone};
 use sqlx::{PgExecutor, Row};
@@ -1322,7 +1322,7 @@ pub async fn pay(
     })
 }
 
-/// Outcome of a refund or void.
+/// Outcome of a refund or a void.
 #[derive(Debug, Clone)]
 pub struct Refund {
     pub transaction_id: Uuid,
@@ -1330,8 +1330,26 @@ pub struct Refund {
     pub amount: Yen,
     /// Value restored, per original bucket.
     pub restorations: Vec<Deduction>,
+    /// Value forfeited because its bucket had already expired, per original
+    /// bucket. Void only — a refund is rejected instead.
+    pub expired: Vec<Deduction>,
     pub balance: Yen,
     pub replayed: bool,
+}
+
+/// How `restore()` treats a bucket whose value has already expired: a refund
+/// cannot hand back value the holder can no longer spend, a void must stay
+/// possible anyway.
+enum ExpiredBucket {
+    Reject,
+    Forfeit,
+}
+
+/// One planned restoration, resolved before anything is written.
+struct PlannedRestoration {
+    bucket_id: Uuid,
+    amount: i64,
+    expired: bool,
 }
 
 /// Refund up to `amount` (or the full refundable remainder when `None`) of a
@@ -1344,18 +1362,37 @@ pub async fn refund(
     idempotency_key: &str,
     now: Timestamp,
 ) -> Result<Refund, DbError> {
-    restore(pool, payment_txn_id, amount, idempotency_key, now, "refund").await
+    restore(
+        pool,
+        payment_txn_id,
+        amount,
+        idempotency_key,
+        now,
+        "refund",
+        ExpiredBucket::Reject,
+    )
+    .await
 }
 
 /// Fully reverse a payment (same-day void). Like a full refund but recorded as a
-/// technical `reversal`. Idempotent on `idempotency_key`.
+/// technical `reversal`, and value in an already-expired bucket is forfeited
+/// rather than refused. Idempotent on `idempotency_key`.
 pub async fn void(
     pool: &Pool,
     payment_txn_id: Uuid,
     idempotency_key: &str,
     now: Timestamp,
 ) -> Result<Refund, DbError> {
-    restore(pool, payment_txn_id, None, idempotency_key, now, "reversal").await
+    restore(
+        pool,
+        payment_txn_id,
+        None,
+        idempotency_key,
+        now,
+        "reversal",
+        ExpiredBucket::Forfeit,
+    )
+    .await
 }
 
 /// Shared refund/void machinery. `kind` is the transaction *and* ledger kind
@@ -1367,6 +1404,7 @@ async fn restore(
     idempotency_key: &str,
     now: Timestamp,
     kind: &str,
+    expired_bucket: ExpiredBucket,
 ) -> Result<Refund, DbError> {
     let mut tx = pool.begin().await?;
 
@@ -1469,12 +1507,11 @@ async fn restore(
 
     // Plan the restoration in reverse consumption order, capped per bucket at
     // what it still owes, before writing anything. The original expiry is
-    // preserved (we never touch expires_at), and an already-expired bucket is
-    // refused: balance() filters on `expires_at > now`, so reviving one would
-    // hide the restored value from the holder while letting the next sweep
-    // forfeit it a second time.
+    // preserved (we never touch expires_at). Reviving an expired bucket would
+    // hide the value from the holder (balance() filters on `expires_at > now`)
+    // and let the next sweep forfeit it twice, so a refund refuses it.
     let mut remaining_to_refund = refund_amount;
-    let mut plan: Vec<(Uuid, i64)> = Vec::new();
+    let mut plan: Vec<PlannedRestoration> = Vec::new();
     for r in debits.into_iter().rev() {
         if remaining_to_refund == 0 {
             break;
@@ -1484,11 +1521,15 @@ async fn restore(
         let bucket_refundable = debited - already_by_bucket.get(&bucket_id).copied().unwrap_or(0);
         let restore_amt = remaining_to_refund.min(bucket_refundable);
         if restore_amt > 0 {
-            let expires_at = to_jiff(r.try_get("expires_at")?);
-            if expires_at <= now {
+            let expired = to_jiff(r.try_get("expires_at")?) <= now;
+            if expired && matches!(expired_bucket, ExpiredBucket::Reject) {
                 return Err(DbError::RefundIntoExpiredBucket { bucket_id });
             }
-            plan.push((bucket_id, restore_amt));
+            plan.push(PlannedRestoration {
+                bucket_id,
+                amount: restore_amt,
+                expired,
+            });
             remaining_to_refund -= restore_amt;
         }
     }
@@ -1531,31 +1572,37 @@ async fn restore(
     }
 
     let mut restorations = Vec::new();
-    for (bucket_id, restore_amt) in plan {
-        sqlx::query("UPDATE topup_buckets SET remaining_amount = remaining_amount + $1, status = 'active' WHERE id = $2")
-            .bind(restore_amt)
-            .bind(bucket_id)
-            .execute(&mut *tx)
+    let mut expired = Vec::new();
+    for p in plan {
+        let restored = Deduction {
+            bucket_id: p.bucket_id,
+            amount: Yen::new(p.amount),
+        };
+        if p.expired {
+            // Had the payment never happened, this value would have expired in
+            // the bucket, so book it as breakage. The pair nets to zero, which
+            // leaves `topup_buckets` untouched and nothing to re-sweep.
+            insert_posting(&mut tx, account, txn_id, p.bucket_id, kind, p.amount, now).await?;
+            insert_posting(
+                &mut tx,
+                account,
+                txn_id,
+                p.bucket_id,
+                "expiry",
+                -p.amount,
+                now,
+            )
             .await?;
-        sqlx::query(
-            "INSERT INTO ledger_entries (id, system_code, idm, idi, transaction_id, bucket_id, kind, amount, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-        )
-        .bind(Uuid::now_v7())
-        .bind(sc)
-        .bind(idm)
-        .bind(idi)
-        .bind(txn_id)
-        .bind(bucket_id)
-        .bind(kind)
-        .bind(restore_amt)
-        .bind(to_odt(now))
-        .execute(&mut *tx)
-        .await?;
-        restorations.push(Deduction {
-            bucket_id,
-            amount: Yen::new(restore_amt),
-        });
+            expired.push(restored);
+        } else {
+            sqlx::query("UPDATE topup_buckets SET remaining_amount = remaining_amount + $1, status = 'active' WHERE id = $2")
+                .bind(p.amount)
+                .bind(p.bucket_id)
+                .execute(&mut *tx)
+                .await?;
+            insert_posting(&mut tx, account, txn_id, p.bucket_id, kind, p.amount, now).await?;
+            restorations.push(restored);
+        }
     }
 
     let bal = balance(&mut *tx, account, now).await?;
@@ -1565,9 +1612,38 @@ async fn restore(
         payment_txn_id,
         amount: Yen::new(refund_amount),
         restorations,
+        expired,
         balance: bal.total,
         replayed: false,
     })
+}
+
+/// Append one ledger posting for `transaction_id` against `bucket_id`.
+async fn insert_posting(
+    tx: &mut sqlx::PgConnection,
+    account: AccountKey,
+    transaction_id: Uuid,
+    bucket_id: Uuid,
+    kind: &str,
+    amount: i64,
+    now: Timestamp,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO ledger_entries (id, system_code, idm, idi, transaction_id, bucket_id, kind, amount, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(account.system_code as i32)
+    .bind(account.idm.as_bytes().as_slice())
+    .bind(account.idi.as_bytes().as_slice())
+    .bind(transaction_id)
+    .bind(bucket_id)
+    .bind(kind)
+    .bind(amount)
+    .bind(to_odt(now))
+    .execute(tx)
+    .await?;
+    Ok(())
 }
 
 /// Reconstruct the replay result for an already-recorded refund/void.
@@ -1597,13 +1673,29 @@ async fn refund_replay(
     {
         return Err(DbError::IdempotencyConflict);
     }
-    let restorations = load_postings(&mut *tx, existing_id, kind).await?;
+    // A void writes a reversal posting for expired buckets too, so split those
+    // back out by their matching `expiry` posting.
+    let forfeited = load_postings(&mut *tx, existing_id, "expiry").await?;
+    let forfeited_buckets: HashSet<Uuid> = forfeited.iter().map(|d| d.bucket_id).collect();
+    let restorations: Vec<Deduction> = load_postings(&mut *tx, existing_id, kind)
+        .await?
+        .into_iter()
+        .filter(|d| !forfeited_buckets.contains(&d.bucket_id))
+        .collect();
+    let expired: Vec<Deduction> = forfeited
+        .into_iter()
+        .map(|d| Deduction {
+            bucket_id: d.bucket_id,
+            amount: Yen::new(-d.amount.as_i64()),
+        })
+        .collect();
     let bal = balance(&mut *tx, account, now).await?;
     Ok(Refund {
         transaction_id: existing_id,
         payment_txn_id,
         amount: Yen::new(existing_amount),
         restorations,
+        expired,
         balance: bal.total,
         replayed: true,
     })
