@@ -505,9 +505,9 @@ async fn concurrent_refunds_never_over_refund(pool: PgPool) {
     assert_eq!(ops::balance(&pool, a, t0).await.unwrap().total, Yen::new(0));
 
     // Five concurrent refunds of payment #1, each with a distinct idempotency
-    // key. Only one may succeed: the bucket's `remaining_amount <=
-    // original_amount` CHECK cannot catch an over-refund here, because payment
-    // #2 left enough headroom in the shared bucket to absorb it.
+    // key. Only one may succeed, and the bucket's `remaining_amount <=
+    // original_amount` CHECK is not the backstop: payment #2 left enough
+    // headroom for a second ¥500 to land before the CHECK would fire.
     let mut handles = Vec::new();
     for i in 0..5 {
         let pool = pool.clone();
@@ -516,14 +516,19 @@ async fn concurrent_refunds_never_over_refund(pool: PgPool) {
             ops::refund(&pool, payment_id, Some(yen(500)), &format!("r-{i}"), t0).await
         }));
     }
-    let mut successes = 0;
+    let mut results = Vec::new();
     for h in handles {
-        if h.await.unwrap().is_ok() {
-            successes += 1;
-        }
+        results.push(h.await.unwrap());
     }
 
+    let successes = results.iter().filter(|r| r.is_ok()).count();
     assert_eq!(successes, 1, "payment #1 was only ¥500");
+    for r in &results {
+        assert!(
+            r.is_ok() || matches!(r, Err(melon_db::DbError::RefundExceedsPayment { .. })),
+            "a losing refund must be turned away by the refundable check, got {r:?}"
+        );
+    }
     assert_eq!(
         ops::balance(&pool, a, t0).await.unwrap().total,
         Yen::new(500)
@@ -1023,9 +1028,12 @@ async fn void_splits_restored_and_expired_buckets(pool: PgPool) {
         .unwrap();
     assert_eq!(pay.deductions.len(), 2, "payment straddles both buckets");
 
-    // Only the older bucket has expired by now.
+    // The older bucket is past its expiry, but the payment already drained it,
+    // so the sweep — which only takes `active` buckets with a remainder — has
+    // nothing to collect. The void classifies it from `expires_at` alone.
     let after = ts("2026-08-01T00:00:00+09:00");
-    ops::expire_due(&pool, after, 100).await.unwrap();
+    let swept = ops::expire_due(&pool, after, 100).await.unwrap();
+    assert_eq!(swept.expired_buckets, 0);
 
     let out = ops::void(&pool, pay.transaction_id, "v", after)
         .await
@@ -1056,7 +1064,8 @@ async fn void_into_expired_bucket_is_idempotent(pool: PgPool) {
         .await
         .unwrap();
     let after = ts("2026-08-01T00:00:00+09:00");
-    ops::expire_due(&pool, after, 100).await.unwrap();
+    let swept = ops::expire_due(&pool, after, 100).await.unwrap();
+    assert_eq!(swept.expired_amount, Yen::new(600));
 
     let first = ops::void(&pool, pay.transaction_id, "v", after)
         .await
