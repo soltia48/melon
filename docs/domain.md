@@ -53,7 +53,7 @@
 
 - **各チャージ = 1 バケット**(`topup_buckets`)。`original_amount` / `remaining_amount` / `topped_up_at` / `expires_at` / `status`(`active` / `exhausted` / `expired`)。
 - **`expires_at = チャージ時刻(JST 壁時計)+ 6 暦月`**。jiff で計算し、**日クランプ**(8/31 + 6ヶ月 → 2/28、3 月に繰り上がらない)。UTC で保存。**チャージ時に materialize**(SQL では再計算しない)。
-- 有効なのは `now < expires_at`、`now >= expires_at` で失効。
+- 有効なのは `now < expires_at`、`now >= expires_at` で失効。スイープが `status='expired'` に倒した行は、呼び出し側の `now` が `expires_at` 未満でも失効済み扱い(スイープと並行する返金/取消のレース対策)。
 - タイムゾーンは **Asia/Tokyo(JST, DST なし)**。
 
 ### 消費順

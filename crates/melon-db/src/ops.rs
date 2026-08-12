@@ -1474,11 +1474,12 @@ async fn restore(
     }
 
     // Original per-bucket debits, in consumption order, with each bucket's
-    // expiry for the plan below. Locked in `le.seq` order (the same order
+    // expiry state for the plan below. Locked in `le.seq` order (the same order
     // `pay()` takes, so no new deadlock cycle): `expire_due()` sweeps with
-    // `SKIP LOCKED`, so an unlocked `expires_at` could go stale before use.
+    // `SKIP LOCKED` against its own clock, so without the lock it could flip a
+    // bucket between this read and the restoring UPDATE below.
     let debits = sqlx::query(
-        "SELECT le.bucket_id, le.amount, tb.expires_at FROM ledger_entries le
+        "SELECT le.bucket_id, le.amount, tb.expires_at, tb.status FROM ledger_entries le
            JOIN topup_buckets tb ON tb.id = le.bucket_id
           WHERE le.transaction_id = $1 AND le.kind = 'payment' ORDER BY le.seq
           FOR UPDATE OF tb",
@@ -1521,7 +1522,12 @@ async fn restore(
         let bucket_refundable = debited - already_by_bucket.get(&bucket_id).copied().unwrap_or(0);
         let restore_amt = remaining_to_refund.min(bucket_refundable);
         if restore_amt > 0 {
-            let expired = to_jiff(r.try_get("expires_at")?) <= now;
+            // `expires_at` never changes, so a stale `now` captured before a
+            // sweep still reads "live". Only `status == "expired"` counts,
+            // not `!= "active"` — `exhausted` buckets are still live and
+            // refundable.
+            let expired = to_jiff(r.try_get("expires_at")?) <= now
+                || r.try_get::<String, _>("status")? == "expired";
             if expired && matches!(expired_bucket, ExpiredBucket::Reject) {
                 return Err(DbError::RefundIntoExpiredBucket { bucket_id });
             }
