@@ -1049,6 +1049,32 @@ async fn void_splits_restored_and_expired_buckets(pool: PgPool) {
         Yen::new(500),
         "only the live bucket is spendable"
     );
+
+    // The old bucket was drained to zero by the payment, so it stays
+    // `exhausted` — outside the sweep's `status = 'active'` filter — and the
+    // forfeited ¥300 is booked once, by the void itself.
+    let old_bucket = pay.deductions[0].bucket_id;
+    let status: String = sqlx::query_scalar("SELECT status FROM topup_buckets WHERE id = $1")
+        .bind(old_bucket)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "exhausted");
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT remaining_amount FROM topup_buckets WHERE id = $1")
+            .bind(old_bucket)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(remaining, 0);
+
+    let second_sweep = ops::expire_due(&pool, after, 100).await.unwrap();
+    assert_eq!(second_sweep.expired_buckets, 0);
+    assert_eq!(
+        ops::issuer_balance(&pool).await.unwrap().expiry_income,
+        Yen::new(300),
+        "the forfeited slice is breakage exactly once"
+    );
 }
 
 #[sqlx::test]
