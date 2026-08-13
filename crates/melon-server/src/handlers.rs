@@ -1079,9 +1079,10 @@ pub struct RefundResp {
     pub replayed: bool,
 }
 
-/// Audit a refund or a void. Both restore money to the buckets the payment drew
-/// from, and both are reachable by a merchant *and* by an admin, so all four paths
-/// log the same shape.
+/// Audit a refund or a void. Both reverse value the payment drew from the
+/// cardholder's buckets — a void forfeits the expired part instead of restoring
+/// it — and both are reachable by a merchant *and* by an admin, so all four
+/// paths log the same shape.
 fn audit_refund(
     event: &'static str,
     out: &ops::Refund,

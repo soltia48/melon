@@ -1345,7 +1345,8 @@ enum ExpiredBucket {
     Forfeit,
 }
 
-/// One planned restoration, resolved before anything is written.
+/// One planned per-bucket outcome — a restoration, or a forfeit on void —
+/// resolved before anything is written.
 struct PlannedRestoration {
     bucket_id: Uuid,
     amount: i64,
@@ -1376,9 +1377,10 @@ pub async fn refund(
     .await
 }
 
-/// Fully reverse a payment, with no time limit. Like a full refund but recorded
-/// as a technical `reversal`, and value in an already-expired bucket is
-/// forfeited rather than refused. Idempotent on `idempotency_key`.
+/// Reverse a payment's entire remaining refundable amount, with no time limit.
+/// Like a full refund but recorded as a technical `reversal`, and value in an
+/// already-expired bucket is forfeited rather than refused. Idempotent on
+/// `idempotency_key`.
 pub async fn void(
     pool: &Pool,
     payment_txn_id: Uuid,
@@ -1589,8 +1591,8 @@ async fn restore(
         };
         if p.expired {
             // Had the payment never happened, this value would have expired in
-            // the bucket, so book it as breakage. The pair nets to zero, which
-            // leaves `topup_buckets` untouched and nothing to re-sweep.
+            // the bucket, so book it as breakage. The pair nets to zero, so the
+            // bucket row is untouched and this slice can never be swept again.
             insert_posting(&mut tx, account, txn_id, p.bucket_id, kind, p.amount, now).await?;
             insert_posting(
                 &mut tx,
