@@ -197,7 +197,7 @@ function AccountDetail({
 
   const refund = async (paymentId: string, refundable: number) => {
     const input = prompt(
-      `返金額(円)。空欄で返金可能額 ${yen(refundable)} を返金します。`,
+      `返金額(円)。空欄で返金可能額 ${refundable} 円を返金します。`,
     );
     if (input === null) return;
     const amount = input.trim() === "" ? null : parseInt(input, 10);
