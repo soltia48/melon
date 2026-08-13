@@ -196,7 +196,9 @@ function AccountDetail({
   };
 
   const refund = async (paymentId: string, refundable: number) => {
-    const input = prompt(`返金額(円)。空欄で全額(${refundable})を返金します。`);
+    const input = prompt(
+      `返金額(円)。空欄で返金可能額 ${yen(refundable)} を返金します。`,
+    );
     if (input === null) return;
     const amount = input.trim() === "" ? null : parseInt(input, 10);
     if (amount !== null && !(amount > 0)) return toast("金額が不正です");

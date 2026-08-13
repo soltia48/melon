@@ -31,7 +31,9 @@ export default function MerchantTransactionsPage() {
   );
 
   const refund = async (paymentId: string) => {
-    const input = prompt("返金額(円)。空欄で全額返金します。");
+    const input = prompt(
+      "返金額(円)。空欄で残り全額(返金済みを除く)を返金します。",
+    );
     if (input === null) return;
     const trimmed = input.trim();
     let amount: number | null = null;
