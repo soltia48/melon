@@ -11,6 +11,7 @@ use melon_core::idm::Idm;
 use melon_core::money::{PositiveYen, Yen};
 use melon_db::ops;
 use sqlx::PgPool;
+use std::time::Duration;
 
 /// A fixed test IDm (cards in this deployment have a stable IDm).
 const IDM: [u8; 8] = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
@@ -438,6 +439,10 @@ async fn void_reverses_full_payment(pool: PgPool) {
     let void = ops::void(&pool, pay.transaction_id, "v", t0).await.unwrap();
     assert_eq!(void.amount, Yen::new(700));
     assert_eq!(void.balance, Yen::new(1000));
+    assert!(
+        void.expired.is_empty(),
+        "nothing expired, nothing forfeited"
+    );
     assert_eq!(
         ops::balance(&pool, a, t0).await.unwrap().total,
         Yen::new(1000)
@@ -470,6 +475,170 @@ async fn refund_is_idempotent(pool: PgPool) {
     assert_eq!(
         ops::balance(&pool, a, t0).await.unwrap().total,
         Yen::new(800)
+    );
+}
+
+#[sqlx::test]
+async fn concurrent_refunds_never_over_refund(pool: PgPool) {
+    let a = acct(28);
+    let m = ops::create_merchant(
+        &pool,
+        "m-conc-refund",
+        "Concurrent Refund Test",
+        0,
+        10_000_000,
+    )
+    .await
+    .unwrap();
+    let t0 = ts("2026-01-15T09:00:00+09:00");
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
+        .await
+        .unwrap();
+
+    // Two ¥500 payments share and exhaust the same ¥1000 bucket.
+    let p1 = ops::pay(&pool, a, m, None, yen(500), "p1", None, t0)
+        .await
+        .unwrap();
+    ops::pay(&pool, a, m, None, yen(500), "p2", None, t0)
+        .await
+        .unwrap();
+    assert_eq!(ops::balance(&pool, a, t0).await.unwrap().total, Yen::new(0));
+
+    // Five concurrent refunds of payment #1, each with a distinct idempotency
+    // key. Only one may succeed, and the bucket's `remaining_amount <=
+    // original_amount` CHECK is not the backstop: payment #2 left enough
+    // headroom for a second ¥500 to land before the CHECK would fire.
+    let mut handles = Vec::new();
+    for i in 0..5 {
+        let pool = pool.clone();
+        let payment_id = p1.transaction_id;
+        handles.push(tokio::spawn(async move {
+            ops::refund(&pool, payment_id, Some(yen(500)), &format!("r-{i}"), t0).await
+        }));
+    }
+    let mut results = Vec::new();
+    for h in handles {
+        results.push(h.await.unwrap());
+    }
+
+    let successes = results.iter().filter(|r| r.is_ok()).count();
+    assert_eq!(successes, 1, "payment #1 was only ¥500");
+    for r in &results {
+        assert!(
+            r.is_ok() || matches!(r, Err(melon_db::DbError::RefundExceedsPayment { .. })),
+            "a losing refund must be turned away by the refundable check, got {r:?}"
+        );
+    }
+    assert_eq!(
+        ops::balance(&pool, a, t0).await.unwrap().total,
+        Yen::new(500)
+    );
+}
+
+#[sqlx::test]
+async fn refund_does_not_resurrect_an_expired_bucket(pool: PgPool) {
+    let a = acct(29);
+    let m = ops::create_merchant(&pool, "m-exp-refund", "Expired Refund Test", 0, 10_000_000)
+        .await
+        .unwrap();
+    let t0 = ts("2026-01-15T09:00:00+09:00"); // bucket expires 2026-07-15
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
+        .await
+        .unwrap();
+    let pay = ops::pay(&pool, a, m, None, yen(400), "p", None, t0)
+        .await
+        .unwrap();
+
+    // The bucket's ¥600 leftover is swept as breakage after it expires.
+    let after = ts("2026-08-01T00:00:00+09:00");
+    let swept = ops::expire_due(&pool, after, 100).await.unwrap();
+    assert_eq!(swept.expired_buckets, 1);
+    assert_eq!(swept.expired_amount, Yen::new(600));
+
+    // A late refund must not flip the swept bucket back to 'active' with a past
+    // expiry: the holder could never spend the restored ¥400, and the row would
+    // contradict the `expiry` posting the sweep already wrote.
+    let refund_result = ops::refund(&pool, pay.transaction_id, Some(yen(400)), "r", after).await;
+    assert!(
+        matches!(
+            refund_result,
+            Err(melon_db::DbError::RefundIntoExpiredBucket { .. })
+        ),
+        "expected RefundIntoExpiredBucket, got {refund_result:?}"
+    );
+    assert_eq!(
+        ops::balance(&pool, a, after).await.unwrap().total,
+        Yen::new(0)
+    );
+
+    // Re-sweeping must find nothing further: the rejected refund left the
+    // bucket alone.
+    let second_sweep = ops::expire_due(&pool, after, 100).await.unwrap();
+    assert_eq!(second_sweep.expired_amount, Yen::new(0));
+}
+
+#[sqlx::test]
+async fn refund_locks_the_buckets_it_restores(pool: PgPool) {
+    let a = acct(30);
+    let m = ops::create_merchant(&pool, "m-lock-refund", "Refund Lock Test", 0, 10_000_000)
+        .await
+        .unwrap();
+    let t0 = ts("2026-01-15T09:00:00+09:00");
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
+        .await
+        .unwrap();
+    let pay = ops::pay(&pool, a, m, None, yen(400), "p", None, t0)
+        .await
+        .unwrap();
+    let bucket_id = pay.deductions[0].bucket_id;
+
+    // Stand in for a concurrent `expire_due()` sweep that has the bucket row
+    // locked but hasn't committed yet.
+    let mut holder = pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM topup_buckets WHERE id = $1 FOR UPDATE")
+        .bind(bucket_id)
+        .fetch_one(&mut *holder)
+        .await
+        .unwrap();
+
+    let payment_id = pay.transaction_id;
+    let refunder = pool.clone();
+    let refund =
+        tokio::spawn(
+            async move { ops::refund(&refunder, payment_id, Some(yen(400)), "r", t0).await },
+        );
+
+    // Wait for a backend blocked on a lock inside the planning SELECT, which
+    // its `FOR UPDATE OF tb` clause identifies. Timing out on refund() itself
+    // would not distinguish this from blocking on the later UPDATE, which
+    // needs the same lock either way.
+    let mut waiting_on_select = false;
+    for _ in 0..40 {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity
+              WHERE wait_event_type = 'Lock' AND query ILIKE '%FOR UPDATE OF tb%'
+                AND datname = current_database()",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        if count > 0 {
+            waiting_on_select = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        waiting_on_select,
+        "refund's restoration-planning SELECT never showed up waiting on the bucket lock"
+    );
+
+    holder.rollback().await.unwrap();
+    let out = refund.await.unwrap().unwrap();
+    assert_eq!(out.amount, Yen::new(400));
+    assert_eq!(
+        ops::balance(&pool, a, t0).await.unwrap().total,
+        Yen::new(1000)
     );
 }
 
@@ -798,4 +967,507 @@ async fn refund_is_allowed_even_below_credit_limit(pool: PgPool) {
         .unwrap();
     let m_row = ops::get_merchant(&pool, m).await.unwrap().unwrap();
     assert_eq!(m_row.collected, Yen::new(-1500));
+}
+
+#[sqlx::test]
+async fn void_forfeits_value_in_an_expired_bucket(pool: PgPool) {
+    let a = acct(31);
+    let m = ops::create_merchant(&pool, "m-exp-void", "Expired Void Test", 0, 10_000_000)
+        .await
+        .unwrap();
+    let t0 = ts("2026-01-15T09:00:00+09:00"); // bucket expires 2026-07-15
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
+        .await
+        .unwrap();
+    let pay = ops::pay(&pool, a, m, None, yen(400), "p", None, t0)
+        .await
+        .unwrap();
+
+    let after = ts("2026-08-01T00:00:00+09:00");
+    let swept = ops::expire_due(&pool, after, 100).await.unwrap();
+    assert_eq!(swept.expired_amount, Yen::new(600));
+
+    // A void is a technical reversal and must stay possible: it books the
+    // reversal and forfeits the value in the same transaction.
+    let out = ops::void(&pool, pay.transaction_id, "v", after)
+        .await
+        .unwrap();
+    assert_eq!(out.amount, Yen::new(400));
+    assert!(out.restorations.is_empty());
+    assert_eq!(out.expired.len(), 1);
+    assert_eq!(out.expired[0].amount, Yen::new(400));
+    assert_eq!(out.expired[0].bucket_id, pay.deductions[0].bucket_id);
+    assert_eq!(out.balance, Yen::new(0));
+
+    // The forfeited value lands in breakage exactly once, and the bucket is not
+    // resurrected for a second sweep.
+    assert_eq!(
+        ops::issuer_balance(&pool).await.unwrap().expiry_income,
+        Yen::new(1000)
+    );
+    let second_sweep = ops::expire_due(&pool, after, 100).await.unwrap();
+    assert_eq!(second_sweep.expired_amount, Yen::new(0));
+}
+
+#[sqlx::test]
+async fn void_splits_restored_and_expired_buckets(pool: PgPool) {
+    let a = acct(32);
+    let m = ops::create_merchant(&pool, "m-split-void", "Split Void Test", 0, 10_000_000)
+        .await
+        .unwrap();
+    // Two buckets with different expiries; the payment straddles both.
+    let old = ts("2026-01-15T09:00:00+09:00"); // expires 2026-07-15
+    let new = ts("2026-05-15T09:00:00+09:00"); // expires 2026-11-15
+    ops::top_up(&pool, a, None, None, yen(300), "t-old", old, &jst())
+        .await
+        .unwrap();
+    ops::top_up(&pool, a, None, None, yen(500), "t-new", new, &jst())
+        .await
+        .unwrap();
+    let pay = ops::pay(&pool, a, m, None, yen(500), "p", None, new)
+        .await
+        .unwrap();
+    assert_eq!(pay.deductions.len(), 2, "payment straddles both buckets");
+
+    // The older bucket is past its expiry, but the payment already drained it,
+    // so the sweep — which only takes `active` buckets with a remainder — has
+    // nothing to collect. The void classifies it from `expires_at` alone.
+    let after = ts("2026-08-01T00:00:00+09:00");
+    let swept = ops::expire_due(&pool, after, 100).await.unwrap();
+    assert_eq!(swept.expired_buckets, 0);
+
+    let out = ops::void(&pool, pay.transaction_id, "v", after)
+        .await
+        .unwrap();
+    let restored: i64 = out.restorations.iter().map(|d| d.amount.as_i64()).sum();
+    let forfeited: i64 = out.expired.iter().map(|d| d.amount.as_i64()).sum();
+    assert_eq!(restored, 200, "the live bucket takes back its share");
+    assert_eq!(forfeited, 300, "the expired bucket's share is forfeited");
+    assert_eq!(restored + forfeited, out.amount.as_i64());
+    assert_eq!(
+        out.balance,
+        Yen::new(500),
+        "only the live bucket is spendable"
+    );
+
+    // The old bucket was drained to zero by the payment, so it stays
+    // `exhausted` — outside the sweep's `status = 'active'` filter — and the
+    // forfeited ¥300 is booked once, by the void itself.
+    let old_bucket = pay.deductions[0].bucket_id;
+    let status: String = sqlx::query_scalar("SELECT status FROM topup_buckets WHERE id = $1")
+        .bind(old_bucket)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "exhausted");
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT remaining_amount FROM topup_buckets WHERE id = $1")
+            .bind(old_bucket)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(remaining, 0);
+
+    let second_sweep = ops::expire_due(&pool, after, 100).await.unwrap();
+    assert_eq!(second_sweep.expired_buckets, 0);
+    assert_eq!(
+        ops::issuer_balance(&pool).await.unwrap().expiry_income,
+        Yen::new(300),
+        "the forfeited slice is breakage exactly once"
+    );
+}
+
+#[sqlx::test]
+async fn void_into_expired_bucket_is_idempotent(pool: PgPool) {
+    let a = acct(33);
+    let m = ops::create_merchant(&pool, "m-replay-void", "Replay Void Test", 0, 10_000_000)
+        .await
+        .unwrap();
+    let t0 = ts("2026-01-15T09:00:00+09:00");
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
+        .await
+        .unwrap();
+    let pay = ops::pay(&pool, a, m, None, yen(400), "p", None, t0)
+        .await
+        .unwrap();
+    let after = ts("2026-08-01T00:00:00+09:00");
+    let swept = ops::expire_due(&pool, after, 100).await.unwrap();
+    assert_eq!(swept.expired_amount, Yen::new(600));
+
+    let first = ops::void(&pool, pay.transaction_id, "v", after)
+        .await
+        .unwrap();
+    let replay = ops::void(&pool, pay.transaction_id, "v", after)
+        .await
+        .unwrap();
+
+    assert!(replay.replayed);
+    assert_eq!(replay.transaction_id, first.transaction_id);
+    assert_eq!(replay.amount, first.amount);
+    // The reversal posting is written for expired buckets too, so a naive replay
+    // would report the same value in both lists.
+    assert!(replay.restorations.is_empty());
+    assert_eq!(replay.expired.len(), 1);
+    assert_eq!(replay.expired[0].amount, Yen::new(400));
+}
+
+#[sqlx::test]
+async fn void_replay_preserves_restored_and_expired_split(pool: PgPool) {
+    let a = acct(34);
+    let m = ops::create_merchant(
+        &pool,
+        "m-replay-split-void",
+        "Replay Split Void Test",
+        0,
+        10_000_000,
+    )
+    .await
+    .unwrap();
+    let old = ts("2026-01-15T09:00:00+09:00"); // expires 2026-07-15
+    let new = ts("2026-05-15T09:00:00+09:00"); // expires 2026-11-15
+    ops::top_up(&pool, a, None, None, yen(300), "t-old", old, &jst())
+        .await
+        .unwrap();
+    ops::top_up(&pool, a, None, None, yen(500), "t-new", new, &jst())
+        .await
+        .unwrap();
+    let pay = ops::pay(&pool, a, m, None, yen(500), "p", None, new)
+        .await
+        .unwrap();
+
+    let after = ts("2026-08-01T00:00:00+09:00");
+    ops::expire_due(&pool, after, 100).await.unwrap();
+
+    let first = ops::void(&pool, pay.transaction_id, "v", after)
+        .await
+        .unwrap();
+    let replay = ops::void(&pool, pay.transaction_id, "v", after)
+        .await
+        .unwrap();
+
+    assert!(replay.replayed);
+    assert_eq!(replay.transaction_id, first.transaction_id);
+    // A filter that drops too much (or too little) would still pass a
+    // same-total check; pin the exact per-bucket split instead.
+    assert_eq!(replay.restorations.len(), 1);
+    assert_eq!(replay.restorations[0].amount, Yen::new(200));
+    assert_eq!(
+        replay.restorations[0].bucket_id,
+        first.restorations[0].bucket_id
+    );
+    assert_eq!(replay.expired.len(), 1);
+    assert_eq!(replay.expired[0].amount, Yen::new(300));
+    assert_eq!(replay.expired[0].bucket_id, first.expired[0].bucket_id);
+}
+
+#[sqlx::test]
+async fn void_forfeits_expired_value_before_any_sweep(pool: PgPool) {
+    let a = acct(35);
+    let m = ops::create_merchant(
+        &pool,
+        "m-presweep-void",
+        "Presweep Void Test",
+        0,
+        10_000_000,
+    )
+    .await
+    .unwrap();
+    let t0 = ts("2026-01-15T09:00:00+09:00"); // bucket expires 2026-07-15
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
+        .await
+        .unwrap();
+    let pay = ops::pay(&pool, a, m, None, yen(400), "p", None, t0)
+        .await
+        .unwrap();
+
+    // Time has passed the bucket's expiry, but `expire_due()` has not run yet:
+    // the bucket is still `status = 'active'` with its pre-expiry
+    // `remaining_amount`. `expires_at` alone already makes it expired, so void
+    // forfeits here without waiting for the sweep to flip `status`.
+    let after = ts("2026-08-01T00:00:00+09:00");
+    let out = ops::void(&pool, pay.transaction_id, "v", after)
+        .await
+        .unwrap();
+    assert!(out.restorations.is_empty());
+    assert_eq!(out.expired.len(), 1);
+    assert_eq!(out.expired[0].amount, Yen::new(400));
+
+    // balance() is unaffected either way — it already excludes the bucket via
+    // its own `expires_at > now` filter, sweep or no sweep.
+    assert_eq!(
+        ops::balance(&pool, a, after).await.unwrap().total,
+        Yen::new(0)
+    );
+
+    // The bucket's un-forfeited remainder (¥600, never touched by the void) is
+    // still sitting there with `status = 'active'`, so the next sweep collects
+    // it — once, not twice, since the void's own ¥400 already left the books
+    // at zero for that slice.
+    let swept = ops::expire_due(&pool, after, 100).await.unwrap();
+    assert_eq!(swept.expired_buckets, 1);
+    assert_eq!(swept.expired_amount, Yen::new(600));
+    assert_eq!(
+        ops::issuer_balance(&pool).await.unwrap().expiry_income,
+        Yen::new(1000),
+        "the full original top-up ends up as breakage, counted once"
+    );
+
+    let second_sweep = ops::expire_due(&pool, after, 100).await.unwrap();
+    assert_eq!(second_sweep.expired_amount, Yen::new(0));
+}
+
+#[sqlx::test]
+async fn refund_rejects_a_bucket_swept_after_it_started(pool: PgPool) {
+    let a = acct(82);
+    let m = ops::create_merchant(&pool, "m-swept-refund", "Swept Refund Test", 0, 10_000_000)
+        .await
+        .unwrap();
+    let t0 = ts("2026-01-15T09:00:00+09:00"); // bucket expires 2026-07-15
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
+        .await
+        .unwrap();
+    let pay = ops::pay(&pool, a, m, None, yen(400), "p", None, t0)
+        .await
+        .unwrap();
+    let bucket_id = pay.deductions[0].bucket_id;
+
+    let sweep_now = ts("2026-08-01T00:00:00+09:00");
+    let swept = ops::expire_due(&pool, sweep_now, 100).await.unwrap();
+    assert_eq!(swept.expired_amount, Yen::new(600));
+
+    // A refund that blocked on the bucket lock before the expiry and resumed
+    // after the sweep committed still carries its pre-expiry `now`, so
+    // `expires_at` alone still reads "live".
+    let before_expiry = ts("2026-07-14T23:59:59+09:00");
+    let result = ops::refund(
+        &pool,
+        pay.transaction_id,
+        Some(yen(400)),
+        "r",
+        before_expiry,
+    )
+    .await;
+    assert!(
+        matches!(
+            result,
+            Err(melon_db::DbError::RefundIntoExpiredBucket { bucket_id: b }) if b == bucket_id
+        ),
+        "expected RefundIntoExpiredBucket, got {result:?}"
+    );
+
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT remaining_amount FROM topup_buckets WHERE id = $1")
+            .bind(bucket_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let status: String = sqlx::query_scalar("SELECT status FROM topup_buckets WHERE id = $1")
+        .bind(bucket_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(remaining, 0, "the swept bucket must stay empty");
+    assert_eq!(status, "expired", "the swept bucket must not be revived");
+
+    let second_sweep = ops::expire_due(&pool, sweep_now, 100).await.unwrap();
+    assert_eq!(second_sweep.expired_amount, Yen::new(0));
+}
+
+#[sqlx::test]
+async fn void_forfeits_a_bucket_swept_after_it_started(pool: PgPool) {
+    let a = acct(83);
+    let m = ops::create_merchant(&pool, "m-swept-void", "Swept Void Test", 0, 10_000_000)
+        .await
+        .unwrap();
+    let t0 = ts("2026-01-15T09:00:00+09:00"); // bucket expires 2026-07-15
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
+        .await
+        .unwrap();
+    let pay = ops::pay(&pool, a, m, None, yen(400), "p", None, t0)
+        .await
+        .unwrap();
+    let bucket_id = pay.deductions[0].bucket_id;
+
+    let sweep_now = ts("2026-08-01T00:00:00+09:00");
+    let swept = ops::expire_due(&pool, sweep_now, 100).await.unwrap();
+    assert_eq!(swept.expired_amount, Yen::new(600));
+
+    // Same stale `now` as the refund case: a void must take the forfeit branch
+    // rather than resurrect the bucket.
+    let before_expiry = ts("2026-07-14T23:59:59+09:00");
+    let out = ops::void(&pool, pay.transaction_id, "v", before_expiry)
+        .await
+        .unwrap();
+    assert!(out.restorations.is_empty());
+    assert_eq!(out.expired.len(), 1);
+    assert_eq!(out.expired[0].bucket_id, bucket_id);
+    assert_eq!(out.expired[0].amount, Yen::new(400));
+
+    let status: String = sqlx::query_scalar("SELECT status FROM topup_buckets WHERE id = $1")
+        .bind(bucket_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "expired");
+    assert_eq!(
+        ops::issuer_balance(&pool).await.unwrap().expiry_income,
+        Yen::new(1000),
+        "the full top-up ends up as breakage, counted once"
+    );
+
+    let second_sweep = ops::expire_due(&pool, sweep_now, 100).await.unwrap();
+    assert_eq!(second_sweep.expired_amount, Yen::new(0));
+}
+
+#[sqlx::test]
+async fn refund_revives_an_exhausted_bucket(pool: PgPool) {
+    let a = acct(84);
+    let m = ops::create_merchant(
+        &pool,
+        "m-exhausted-refund",
+        "Exhausted Refund Test",
+        0,
+        10_000_000,
+    )
+    .await
+    .unwrap();
+    let t0 = ts("2026-01-15T09:00:00+09:00");
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
+        .await
+        .unwrap();
+    let pay = ops::pay(&pool, a, m, None, yen(1000), "p", None, t0)
+        .await
+        .unwrap();
+    let bucket_id = pay.deductions[0].bucket_id;
+    let status: String = sqlx::query_scalar("SELECT status FROM topup_buckets WHERE id = $1")
+        .bind(bucket_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "exhausted", "the payment drained the bucket");
+
+    // `exhausted` is a live bucket that happens to be empty, unlike `expired`.
+    let out = ops::refund(&pool, pay.transaction_id, Some(yen(400)), "r", t0)
+        .await
+        .unwrap();
+    assert_eq!(out.restorations.len(), 1);
+    assert_eq!(out.restorations[0].bucket_id, bucket_id);
+    assert_eq!(out.balance, Yen::new(400));
+
+    // The restored value is spendable again.
+    ops::pay(&pool, a, m, None, yen(400), "p2", None, t0)
+        .await
+        .unwrap();
+    assert_eq!(ops::balance(&pool, a, t0).await.unwrap().total, Yen::new(0));
+}
+
+#[sqlx::test]
+async fn partial_refund_below_the_expired_slice_succeeds(pool: PgPool) {
+    let a = acct(85);
+    let m = ops::create_merchant(
+        &pool,
+        "m-partial-expired",
+        "Partial Expired Test",
+        0,
+        10_000_000,
+    )
+    .await
+    .unwrap();
+    let old = ts("2026-01-15T09:00:00+09:00"); // expires 2026-07-15
+    let new = ts("2026-05-15T09:00:00+09:00"); // expires 2026-11-15
+    ops::top_up(&pool, a, None, None, yen(300), "t-old", old, &jst())
+        .await
+        .unwrap();
+    ops::top_up(&pool, a, None, None, yen(500), "t-new", new, &jst())
+        .await
+        .unwrap();
+    let pay = ops::pay(&pool, a, m, None, yen(500), "p", None, new)
+        .await
+        .unwrap();
+    assert_eq!(pay.deductions.len(), 2, "payment straddles both buckets");
+    let new_bucket = pay.deductions[1].bucket_id;
+
+    // Only the older bucket is past its expiry now.
+    let after = ts("2026-08-01T00:00:00+09:00");
+
+    // Restoration walks the payment's buckets in reverse consumption order, so
+    // a refund that stays inside the still-live bucket never reaches the
+    // expired one.
+    let ok = ops::refund(&pool, pay.transaction_id, Some(yen(150)), "r1", after)
+        .await
+        .unwrap();
+    assert_eq!(ok.restorations.len(), 1);
+    assert_eq!(ok.restorations[0].bucket_id, new_bucket);
+    assert_eq!(ok.restorations[0].amount, Yen::new(150));
+
+    // ¥100 outruns the live bucket's remaining ¥50 slice and reaches the
+    // expired one, which takes the whole request down.
+    let rejected = ops::refund(&pool, pay.transaction_id, Some(yen(100)), "r2", after).await;
+    assert!(
+        matches!(
+            rejected,
+            Err(melon_db::DbError::RefundIntoExpiredBucket { .. })
+        ),
+        "expected RefundIntoExpiredBucket, got {rejected:?}"
+    );
+
+    // The rejection wrote nothing — the key is still unused.
+    let retry = ops::refund(&pool, pay.transaction_id, Some(yen(50)), "r2", after)
+        .await
+        .unwrap();
+    assert!(!retry.replayed);
+    assert_eq!(retry.restorations[0].bucket_id, new_bucket);
+
+    let listed = ops::list_refundable_payments(&pool, Some(m), Some(a), 50)
+        .await
+        .unwrap();
+    assert_eq!(listed[0].refunded, Yen::new(200));
+    assert_eq!(listed[0].refundable, Yen::new(300));
+    assert_eq!(
+        ops::balance(&pool, a, after).await.unwrap().total,
+        Yen::new(500),
+        "the live bucket is whole again; the expired one stays invisible"
+    );
+}
+
+#[sqlx::test]
+async fn refundable_list_still_shows_payments_whose_buckets_expired(pool: PgPool) {
+    let a = acct(86);
+    let m = ops::create_merchant(
+        &pool,
+        "m-refundable-expired",
+        "Refundable Expired Test",
+        0,
+        10_000_000,
+    )
+    .await
+    .unwrap();
+    let t0 = ts("2026-01-15T09:00:00+09:00");
+    ops::top_up(&pool, a, None, None, yen(1000), "t", t0, &jst())
+        .await
+        .unwrap();
+    let pay = ops::pay(&pool, a, m, None, yen(400), "p", None, t0)
+        .await
+        .unwrap();
+
+    let after = ts("2026-08-01T00:00:00+09:00");
+    ops::expire_due(&pool, after, 100).await.unwrap();
+
+    // The list is transaction-level only, so the payment still appears with its
+    // full remainder; the refund itself is what turns it away.
+    let listed = ops::list_refundable_payments(&pool, Some(m), Some(a), 50)
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, pay.transaction_id);
+    assert_eq!(listed[0].refundable, Yen::new(400));
+
+    let result = ops::refund(&pool, pay.transaction_id, Some(yen(400)), "r", after).await;
+    assert!(
+        matches!(
+            result,
+            Err(melon_db::DbError::RefundIntoExpiredBucket { .. })
+        ),
+        "expected RefundIntoExpiredBucket, got {result:?}"
+    );
 }

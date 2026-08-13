@@ -32,7 +32,7 @@
 2 つの粒度で記録します。
 
 - **`transactions`(取引・業務イベント)**: 1 業務イベント = 1 行。種別 `kind`: `top_up` / `payment` / `refund` / `reversal` / `adjustment`。`amount` は正の大きさ。`fee`(支払いの手数料)、`merchant_id`、`idempotency_key`(`UNIQUE(kind, idempotency_key)`)、`related_txn_id`、`note`(調整理由)を持つ。
-- **`ledger_entries`(台帳ポスティング)**: 追記専用の**不変**行。1 取引が 1..N 個のポスティングを生成し、同一 `transaction_id` を共有(失効のみ `transaction_id` が NULL)。`amount` は**符号付き**。`bucket_id` で対象バケットを指す。
+- **`ledger_entries`(台帳ポスティング)**: 追記専用の**不変**行。1 取引が 1..N 個のポスティングを生成し、同一 `transaction_id` を共有(スイープによる失効のみ `transaction_id` が NULL。取消が失効済みバケットに対して記帳する `expiry` は、その取消の `transaction_id` を持つ)。`amount` は**符号付き**。`bucket_id` で対象バケットを指す。
 
 台帳の種別と符号(DB の `CHECK` で符号↔種別を拘束):
 
@@ -53,7 +53,7 @@
 
 - **各チャージ = 1 バケット**(`topup_buckets`)。`original_amount` / `remaining_amount` / `topped_up_at` / `expires_at` / `status`(`active` / `exhausted` / `expired`)。
 - **`expires_at = チャージ時刻(JST 壁時計)+ 6 暦月`**。jiff で計算し、**日クランプ**(8/31 + 6ヶ月 → 2/28、3 月に繰り上がらない)。UTC で保存。**チャージ時に materialize**(SQL では再計算しない)。
-- 有効なのは `now < expires_at`、`now >= expires_at` で失効。
+- 有効なのは `now < expires_at`、`now >= expires_at` で失効。スイープが `status='expired'` に倒した行は、呼び出し側の `now` が `expires_at` 未満でも失効済み扱い(スイープと並行する返金/取消のレース対策)。
 - タイムゾーンは **Asia/Tokyo(JST, DST なし)**。
 
 ### 消費順
@@ -63,7 +63,7 @@
 ### 失効の実現(lazy + eager)
 
 - **Lazy(正しさの権威)**: すべての残高読取・支払いで `expires_at > now()` を絞る。ジョブ実行に依存せず常に正しい。
-- **Eager(記帳)**: 定期スイープが期限切れバケットに不変 `expiry` ポスティング(`-remaining`)を追記し `status='expired'` に。Postgres の **advisory lock**(複数インスタンスで 1 回)+ `FOR UPDATE SKIP LOCKED`。冪等。会計・報告を正確化。
+- **Eager(記帳)**: 定期スイープが期限切れバケットに不変 `expiry` ポスティング(`-remaining`)を追記し `status='expired'` に。Postgres の **advisory lock**(複数インスタンスで 1 回)+ `FOR UPDATE SKIP LOCKED`。冪等。会計・報告を正確化。(取消(void)が失効済みバケットを打ち消す際も、その場で `expiry` ポスティングを追記する。`transaction_id` は当該取消のもの。詳細は「返金 / 取消」節)
 
 ## 金銭操作
 
@@ -88,8 +88,8 @@
 
 ### 返金 / 取消(refund / void)
 
-- **返金(refund)**: 元の支払いに対し、**元バケットへ復元・有効期限延長なし**。逆消費順で、各ポスティングの元借方額を上限に復元(過剰/二重返金は `RefundExceedsPayment` = 422)。元バケットが既に失効済みなら復元は即時利用不可(失効価値は復活しない)。
-- **取消(void)**: 支払いの全額を技術的に打ち消す(`reversal`)。実体は全額返金と同じ機構。
+- **返金(refund)**: 元の支払いに対し、**元バケットへ復元・有効期限延長なし**。逆消費順で、各ポスティングの元借方額を上限に復元(過剰/二重返金は `RefundExceedsPayment` = 422)。**復元先となるバケットが失効済みなら、その返金要求全体を拒否**(`RefundIntoExpiredBucket` = 422)。復元しても `balance()` は `expires_at > now` で除外するため利用者は永久に使えず、また、スイープ済みであればその行を `active` に戻すことになり、既に記帳された `expiry` ポスティングと矛盾するため。失効前のバケットだけで賄える部分返金は成立します。
+- **取消(void)**: 支払いの残返金可能額を技術的に打ち消す(`reversal`)。実体は金額指定のない返金と同じ機構だが、**元バケットが失効済みでも成立する**。その分は復元せず、`reversal`(+) と `expiry`(−) を同時に記帳して失効益に計上する(そのバケット行は一切更新しない。スイープ済みなら `expired`/残額 0 のまま、使い切られていれば `exhausted`/残額 0 のままでスイープの対象にもならず、残額が残っていてまだ未スイープなら `active` のままで、その残額は後続のスイープが回収する)。誤請求の技術的訂正を失効で不可能にしないため、また、その支払いが無ければ当該価値はバケットに残って期限到来で失効益になっていたため。
 - いずれも冪等。**手数料は返金しません(手数料は非返還)。**
 
 ### 残高調整(利用者、管理者)
@@ -146,7 +146,7 @@
 | 構成要素 | 導出元 | 意味 |
 |---|---|---|
 | **決済手数料収入** | `Σ transactions.fee`(kind=`payment`) | 加盟店から徴収した手数料。**非返還**のため、返金済みの決済分も含む |
-| **消滅済み残高(失効益)** | `Σ (−ledger_entries.amount)`(kind=`expiry`) | 6ヶ月失効した前払残高の益金(breakage) |
+| **消滅済み残高(失効益)** | `Σ (−ledger_entries.amount)`(kind=`expiry`) | 6ヶ月失効した前払残高の益金(breakage)。スイープ由来分に加え、失効済みバケットに対する取消の失効分を含む |
 | **発行者調整** | `Σ issuer_adjustments.amount`(符号付き、追記専用) | 利益の**引き出し**(−)、**補正・資本注入**(+) |
 
 - 手数料収入・失効益は既存テーブルからの導出で、二重記帳しない(単一の真実の源)。

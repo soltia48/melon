@@ -115,6 +115,11 @@ impl From<DbError> for ApiError {
             .with_details(
                 json!({ "requested": requested.as_i64(), "refundable": refundable.as_i64() }),
             ),
+            DbError::RefundIntoExpiredBucket { bucket_id } => ApiError::unprocessable(
+                "REFUND_INTO_EXPIRED_BUCKET",
+                "refund would restore into an already-expired bucket",
+            )
+            .with_details(json!({ "bucket_id": bucket_id })),
             DbError::IdempotencyConflict => ApiError::new(
                 StatusCode::CONFLICT,
                 "IDEMPOTENCY_CONFLICT",

@@ -56,6 +56,7 @@
 | 409 | `IDEMPOTENCY_CONFLICT` | 同一キーで異なるパラメータ | — |
 | 422 | `INSUFFICIENT_FUNDS` / `CREDIT_LIMIT_EXCEEDED` | 業務ルール違反 | `available`, `requested` |
 | 422 | `REFUND_EXCEEDS_PAYMENT` | 返金可能額の超過 | `requested`, `refundable` |
+| 422 | `REFUND_INTO_EXPIRED_BUCKET` | 復元先となるバケットが失効しており復元不可(返金のみ。取消は失効済みでも成立する) | `bucket_id` |
 | 422 | `UNSUPPORTED_CARD` | IDm が安定した識別子でないカード(製造者コードが `XXFEh`。下記参照) | — |
 
 ---
@@ -141,19 +142,28 @@
 `fee` は加盟店手数料、`net`(= amount − fee)は加盟店受取額。残高不足は **422 `INSUFFICIENT_FUNDS`**。
 
 ### `POST /v1/refunds`  — 返金
-本文: `{ "payment_id": "…", "amount": 100 }`(`amount` 省略で全額)→ **201**
+本文: `{ "payment_id": "…", "amount": 100 }`(`amount` 省略で残額全部)→ **201**
 
 ```json
 { "transaction_id": "…", "payment_id": "…", "amount": 100,
-  "balance": 800, "restorations": [ { "bucket_id": "…", "amount": 100 } ], "replayed": false }
+  "balance": 800, "restorations": [ { "bucket_id": "…", "amount": 100 } ],
+  "expired": [], "replayed": false }
 ```
-過剰返金は **422 `REFUND_EXCEEDS_PAYMENT`**。自店の支払いのみ操作可(他店は 404)。
+過剰返金は **422 `REFUND_EXCEEDS_PAYMENT`**。復元は逆消費順に行われ、**復元先となるバケットが失効していれば 422 `REFUND_INTO_EXPIRED_BUCKET`** でその要求全体を拒否します(部分成立は許しません)。失効前のバケットだけで賄える部分返金は成立します。自店の支払いのみ操作可(他店は 404)。
 
 ### `POST /v1/payments/{payment_id}/void`  — 取消
-本文なし → **200**、応答は返金と同形(全額の技術的打消し)。
+本文なし → **200**、応答は返金と同形(残返金可能額の技術的打消し)。
+
+元決済のバケットが既に失効している場合も**取消は成立します**(返金と異なり 422 になりません)。その分は復元されず失効益に計上され、`expired` に内訳が入ります。`amount` = Σ`restorations` + Σ`expired`。
+
+```json
+{ "transaction_id": "…", "payment_id": "…", "amount": 500, "balance": 200,
+  "restorations": [ { "bucket_id": "…", "amount": 200 } ],
+  "expired":      [ { "bucket_id": "…", "amount": 300 } ], "replayed": false }
+```
 
 ### `GET /v1/payments/refundable?account_id=&limit=`  — 返金可能な支払い一覧
-自店の、指定口座(**仮名 `account_id` で指定**、必須)の、返金余地が残る支払い一覧。端末キオスクの返金フローで使用。他店の `account_id` は **404**。
+自店の、指定口座(**仮名 `account_id` で指定**、必須)の、返金余地が残る支払い一覧。端末キオスクの返金フローで使用。他店の `account_id` は **404**。バケットの失効は考慮しないため、失効済みバケットの支払いもここに載ります(返金実行時、復元が失効済みバケットに達すると **422 `REFUND_INTO_EXPIRED_BUCKET`**。失効前のバケットだけで賄える部分返金は成立します。取消は失効を理由には拒否されません)。
 ```json
 [ { "id": "…", "account_id": "3f2b…", "amount": 500, "fee": 0,
     "refunded": 0, "refundable": 500, "occurred_at": "…Z" } ]

@@ -1074,12 +1074,15 @@ pub struct RefundResp {
     pub amount: i64,
     pub balance: i64,
     pub restorations: Vec<DeductionView>,
+    /// Value forfeited because its bucket had already expired. Void only.
+    pub expired: Vec<DeductionView>,
     pub replayed: bool,
 }
 
-/// Audit a refund or a void. Both restore money to the buckets the payment drew
-/// from, and both are reachable by a merchant *and* by an admin, so all four paths
-/// log the same shape.
+/// Audit a refund or a void. Both reverse value the payment drew from the
+/// cardholder's buckets — a void forfeits the expired part instead of restoring
+/// it — and both are reachable by a merchant *and* by an admin, so all four
+/// paths log the same shape.
 fn audit_refund(
     event: &'static str,
     out: &ops::Refund,
@@ -1096,25 +1099,28 @@ fn audit_refund(
         actor_id = %actor_id,
         amount = out.amount.as_i64(),
         balance = out.balance.as_i64(),
+        expired = out.expired.iter().map(|d| d.amount.as_i64()).sum::<i64>(),
         replayed = out.replayed,
         "{event} booked"
     );
 }
 
 fn refund_response(out: ops::Refund) -> RefundResp {
+    fn views(ds: Vec<melon_core::payment::Deduction>) -> Vec<DeductionView> {
+        ds.into_iter()
+            .map(|d| DeductionView {
+                bucket_id: d.bucket_id,
+                amount: d.amount.as_i64(),
+            })
+            .collect()
+    }
     RefundResp {
         transaction_id: out.transaction_id,
         payment_id: out.payment_txn_id,
         amount: out.amount.as_i64(),
         balance: out.balance.as_i64(),
-        restorations: out
-            .restorations
-            .into_iter()
-            .map(|d| DeductionView {
-                bucket_id: d.bucket_id,
-                amount: d.amount.as_i64(),
-            })
-            .collect(),
+        restorations: views(out.restorations),
+        expired: views(out.expired),
         replayed: out.replayed,
     }
 }
