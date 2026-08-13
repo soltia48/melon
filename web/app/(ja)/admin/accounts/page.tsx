@@ -211,8 +211,11 @@ function AccountDetail({
       toast(errMsg(e));
     }
   };
-  const voidPayment = async (paymentId: string) => {
-    if (!confirm("この支払いを全額取消しますか?")) return;
+  const voidPayment = async (paymentId: string, refundable: number) => {
+    const ok = confirm(
+      `この支払いの返金可能額 ${yen(refundable)} を取消しますか?`,
+    );
+    if (!ok) return;
     try {
       const r = await api.post<RefundResp>(
         `/v1/admin/payments/${encodeURIComponent(paymentId)}/void`,
@@ -320,7 +323,7 @@ function AccountDetail({
                         </button>
                         <button
                           className="sm"
-                          onClick={() => voidPayment(p.id)}
+                          onClick={() => voidPayment(p.id, p.refundable)}
                         >
                           取消
                         </button>

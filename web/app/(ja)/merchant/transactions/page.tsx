@@ -51,7 +51,10 @@ export default function MerchantTransactionsPage() {
     }
   };
   const voidPayment = async (paymentId: string) => {
-    if (!confirm("この支払いを取り消します(全額)。よろしいですか?")) return;
+    const ok = confirm(
+      "この支払いの残り全額(返金済みを除く)を取り消します。よろしいですか?",
+    );
+    if (!ok) return;
     try {
       const r = await api.post<RefundResp>(
         `/v1/payments/${encodeURIComponent(paymentId)}/void`,
