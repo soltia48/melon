@@ -19,7 +19,7 @@ ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 WORKDIR /src
 COPY . .
 
-# Build ONLY the server: a workspace-wide build would union felica-rs's `usb`
+# Build ONLY the server: a workspace-wide build would union felica's `usb`
 # feature (enabled by melon-terminal) and link rusb/libusb into the server.
 # `--locked` makes the build reproducible from Cargo.lock.
 RUN cargo build --release --locked -p melon-server \

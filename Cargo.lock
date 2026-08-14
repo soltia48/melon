@@ -688,9 +688,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
-name = "felica-rs"
-version = "0.1.0"
-source = "git+https://github.com/soltia48/felica-rs.git?branch=main#0a0137c086c405e4b848836078574ea9750d5d25"
+name = "felica"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab7576b3fa191de68673a971ec5ac40640362a8f1c91be650bc3a5c5da163779"
 dependencies = [
  "aes",
  "cbc",
@@ -1392,7 +1393,7 @@ name = "melon-auth"
 version = "0.1.6"
 dependencies = [
  "axum",
- "felica-rs",
+ "felica",
  "flume",
  "hex",
  "rand 0.9.5",
@@ -1436,7 +1437,7 @@ version = "0.1.6"
 dependencies = [
  "argon2",
  "axum",
- "felica-rs",
+ "felica",
  "hex",
  "http-body-util",
  "jiff",
@@ -1465,7 +1466,7 @@ dependencies = [
  "anyhow",
  "clap",
  "dirs",
- "felica-rs",
+ "felica",
  "hex",
  "open",
  "rand 0.9.5",

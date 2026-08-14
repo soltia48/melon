@@ -5,7 +5,7 @@
 //! depending on `axum` so it can travel across the session worker-thread boundary;
 //! the `IntoResponse` conversion lives in [`crate::http`].
 
-use felica_rs::felica_standard::FelicaStandardError;
+use felica::felica_standard::FelicaStandardError;
 
 /// An error that maps directly onto an HTTP JSON error response.
 #[derive(Debug, Clone)]
@@ -61,9 +61,9 @@ impl std::fmt::Display for ProtocolError {
 
 impl std::error::Error for ProtocolError {}
 
-/// Map an `felica-rs` protocol error onto a [`ProtocolError`].
+/// Map an `felica` protocol error onto a [`ProtocolError`].
 ///
-/// Note: `felica-rs` uses its own error taxonomy, so the numeric `code` does not
+/// Note: `felica` uses its own error taxonomy, so the numeric `code` does not
 /// match nfcpy's internal errno values used by the previous Python server. A
 /// FeliCa status-flag error is surfaced as `code = SF1 << 8 | SF2`.
 pub fn map_felica_error(err: &FelicaStandardError) -> ProtocolError {

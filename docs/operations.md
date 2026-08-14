@@ -99,7 +99,7 @@ export DATABASE_URL=postgres://melon:melon@127.0.0.1:5433/melon
 
 ## 鍵ファイル(`keys.jsonl`)
 
-1 行 1 JSON(felica-rs の `keys.jsonl` 形式)。**秘匿情報。リポジトリにコミットしない**(`.gitignore` 済み)。
+1 行 1 JSON(felica の `keys.jsonl` 形式)。**秘匿情報。リポジトリにコミットしない**(`.gitignore` 済み)。
 
 ```json
 {"system_code":"0003","node":"FFFF","algo":"DES","version":"0003","idm":null,"key":"00112233445566FF"}
@@ -301,7 +301,7 @@ DB・管理者パスワード・FeliCa 鍵は**ファイル**で渡し、環境�
 
 ## ビルド上の注意
 
-- **サーバは `-p melon-server` で個別ビルド**すれば rusb を含みません。ワークスペース全体の `cargo build` は端末の `usb` feature が統合され、felica-rs(rusb)がリンクされます。
+- **サーバは `-p melon-server` で個別ビルド**すれば rusb を含みません。ワークスペース全体の `cargo build` は端末の `usb` feature が統合され、felica(rusb)がリンクされます。
 - 端末のビルド/実行には libusb が必要。
 
 ## テスト

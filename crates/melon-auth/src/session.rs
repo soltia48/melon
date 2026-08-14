@@ -1,6 +1,6 @@
 //! Session management: the per-session worker thread and the [`SessionManager`].
 //!
-//! Each session owns an OS worker thread that drives `felica-rs`'s high-level
+//! Each session owns an OS worker thread that drives `felica`'s high-level
 //! `FelicaStandard` API against a [`RelayDriver`]. Because a single
 //! `mutual_authentication` call spans two card round-trips — and therefore two
 //! HTTP requests — the worker blocks inside the driver's `transceive` between
@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
-use felica_rs::felica_standard::{FelicaStandard, ServiceCode};
+use felica::felica_standard::{FelicaStandard, ServiceCode};
 use serde_json::{Value, json};
 use tokio::sync::Mutex as TokioMutex;
 
@@ -514,7 +514,7 @@ fn new_session_id() -> String {
 }
 
 /// The per-session worker loop: authenticate, then serve encrypted exchanges,
-/// reusing `felica-rs`'s `FelicaStandard` verbatim through the relay driver.
+/// reusing `felica`'s `FelicaStandard` verbatim through the relay driver.
 fn run_session(
     idm: [u8; 8],
     pmm: [u8; 8],

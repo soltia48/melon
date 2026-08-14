@@ -28,20 +28,20 @@ Melon は「**オンライン前払式支払手段**」です。残高は **Post
 |---|---|---|
 | **melon-core** | 純粋ドメイン(I/O なし)。`Yen`/`PositiveYen`、`Idi`、`AccountKey`、台帳・失効の型、6ヶ月失効計算(jiff)、消費アルゴリズム、手数料計算 | jiff, serde, uuid |
 | **melon-db** | PostgreSQL 永続化(sqlx)。マイグレーション、口座・加盟店・金銭操作(top_up/pay/refund/void/adjust/sweep/report)、二重支払い防止 | sqlx, melon-core, time |
-| **melon-auth** | FeliCa 暗号オラクル(`felica-auth-server` を rusb なしで取り込み)。鍵ストア、相互認証セッション、リレードライバ | felica-rs(`default-features=false`), axum, flume |
+| **melon-auth** | FeliCa 暗号オラクル(`felica-auth-server` を rusb なしで取り込み)。鍵ストア、相互認証セッション、リレードライバ | felica(`default-features=false`), axum, flume |
 | **melon-server** | axum HTTP サーバ(純粋な JSON API)。相互認証 + 決済 API + 加盟店/管理 API + 失効スイープを統合。フロントエンドは別アプリ(`web/`) | melon-core/db/auth, axum, sqlx, sha2 |
-| **melon-terminal** | 加盟店端末(lib+bin)。PaSoRi を駆動しフレームを中継。既定は Web UI キオスク、`--op`/`--amount` 指定で CLI 一発実行の 2 モード | felica-rs(`features=["usb"]`), reqwest, tiny_http |
+| **melon-terminal** | 加盟店端末(lib+bin)。PaSoRi を駆動しフレームを中継。既定は Web UI キオスク、`--op`/`--amount` 指定で CLI 一発実行の 2 モード | felica(`features=["usb"]`), reqwest, tiny_http |
 
 ### レイヤリング
 
 ```
-melon-terminal ──HTTP──▶ melon-server ──┬─▶ melon-auth  ──▶ felica-rs(felica_standard, rusb なし)
+melon-terminal ──HTTP──▶ melon-server ──┬─▶ melon-auth  ──▶ felica(felica_standard, rusb なし)
                                         ├─▶ melon-db    ──▶ PostgreSQL
                                         └─▶ melon-core(純粋ドメイン)
 ```
 
 - **melon-core** は I/O を持たず、単体・property テストが容易。
-- **felica-rs は melon-auth と melon-terminal のみ**が依存。サーバ本体は rusb を含みません。
+- **felica は melon-auth と melon-terminal のみ**が依存。サーバ本体は rusb を含みません。
 
 ## FeliCa 暗号オラクル(melon-auth)
 
@@ -50,7 +50,7 @@ melon-terminal ──HTTP──▶ melon-server ──┬─▶ melon-auth  ─�
 - サーバが `keys.jsonl` の DES 鍵を保持(`KeyStore`)。
 - 相互認証の各ステップで、端末が中継すべきコマンドフレームを返し、次のリクエストでカード応答を消費(3 ステップの `POST /v1/mutual-authentication`)。
 - 認証完了時に `issue_id`(= IDi)と `issue_parameter` を得る。
-- セッション(`SessionManager`)は**インメモリ**、TTL でリープ。セッションごとに OS ワーカースレッド + flume チャネルで `felica-rs` の `FelicaStandard` を駆動。
+- セッション(`SessionManager`)は**インメモリ**、TTL でリープ。セッションごとに OS ワーカースレッド + flume チャネルで `felica` の `FelicaStandard` を駆動。
 
 **Melon 固有の拡張**: セッションは認証時の **system_code** と **IDm**、完了後の **検証済み IDi** を保持します。アカウントキーは `(system_code, idm, idi)` の三つ組です。
 

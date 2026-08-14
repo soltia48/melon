@@ -13,7 +13,7 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use felica_rs::felica_standard::{
+use felica::felica_standard::{
     EmulatedService, EmulatedSystem, FelicaStandardEmulator, ServiceCode,
 };
 use http_body_util::BodyExt;

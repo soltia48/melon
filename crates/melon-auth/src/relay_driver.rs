@@ -6,8 +6,8 @@
 //! card's response. `detect_type_f` never hits the wire: it simply reports the
 //! IDm/PMm the client supplied when the session was created.
 
-use felica_rs::felica_standard::{FelicaDriver, Type3TagPollingResult};
-use felica_rs::{DriverError, RemoteTarget};
+use felica::felica_standard::{FelicaDriver, Type3TagPollingResult};
+use felica::{DriverError, RemoteTarget};
 
 use crate::error::ProtocolError;
 
@@ -36,7 +36,7 @@ pub enum Out {
     Error(ProtocolError),
 }
 
-/// Relay driver bridging `felica-rs` and the HTTP request/response cycle.
+/// Relay driver bridging `felica` and the HTTP request/response cycle.
 pub struct RelayDriver {
     idm: Vec<u8>,
     pmm: Vec<u8>,

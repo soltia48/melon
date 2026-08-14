@@ -23,10 +23,10 @@ path = "src/main.rs"
 vendored-libusb = ["rusb/vendored"]
 
 [dependencies]
-# The only crate that enables the felica-rs `usb` feature — the USB stack lives
+# The only crate that enables the felica `usb` feature — the USB stack lives
 # here, never in the server.
-felica-rs = { workspace = true, features = ["usb"] }
-# Pulled in transitively by felica-rs's `usb` feature; declared directly only so
+felica = { workspace = true, features = ["usb"] }
+# Pulled in transitively by felica's `usb` feature; declared directly only so
 # the `vendored-libusb` feature above can toggle libusb vendoring.
 rusb = { version = "0.9", default-features = false }
 clap.workspace = true

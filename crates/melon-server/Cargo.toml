@@ -36,7 +36,7 @@ tracing-subscriber.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [dev-dependencies]
-felica-rs.workspace = true
+felica.workspace = true
 melon-db.workspace = true
 sqlx.workspace = true
 melon-auth.workspace = true

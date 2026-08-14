@@ -1,6 +1,6 @@
 //! The FeliCa **IDi** (issue ID): the account primary key.
 //!
-//! IDi is the 8-byte identifier obtained from `felica-rs`'s
+//! IDi is the 8-byte identifier obtained from `felica`'s
 //! `MutualAuthenticationResult.issue_id`, available only *after* a successful
 //! FeliCa Standard mutual authentication. It is distinct from the IDm, which is
 //! transmitted in the clear at polling time and may be randomized — so IDi, and

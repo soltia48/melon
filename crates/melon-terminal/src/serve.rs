@@ -368,7 +368,7 @@ fn worker(
     // Acquired lazily and re-acquired if lost. A wildcard poll can't tell "no
     // card" from "no reader" (both look like no response), so the only reliable
     // presence check is whether the device can be opened.
-    let mut reader: Option<(felica_rs::prelude::Reader, felica_rs::prelude::RemoteTarget)> = None;
+    let mut reader: Option<(felica::prelude::Reader, felica::prelude::RemoteTarget)> = None;
 
     loop {
         // (Re)acquire the reader if we don't hold one.
@@ -570,8 +570,8 @@ enum Auth {
 /// by every card-present job. The status is set in every branch.
 #[allow(clippy::too_many_arguments)]
 fn wait_and_auth(
-    reader: &mut felica_rs::prelude::Reader,
-    target: &felica_rs::prelude::RemoteTarget,
+    reader: &mut felica::prelude::Reader,
+    target: &felica::prelude::RemoteTarget,
     http: &reqwest::blocking::Client,
     cfg: &Config,
     cancel: &Arc<AtomicBool>,

@@ -13,10 +13,10 @@ use std::fmt;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-use felica_rs::felica_standard::{
+use felica::felica_standard::{
     FelicaStandardCommand, FelicaStandardResponse, Type3TagPollingResult,
 };
-use felica_rs::prelude::*;
+use felica::prelude::*;
 use serde_json::{Value, json};
 use tracing::{debug, info, trace, warn};
 

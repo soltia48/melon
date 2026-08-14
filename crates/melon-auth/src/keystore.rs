@@ -1,6 +1,6 @@
 //! JSONL-backed store of shared FeliCa keys and DES service-key derivation.
 //!
-//! Each line is a JSON object in the same shape as `felica-rs`'s `keys.jsonl`:
+//! Each line is a JSON object in the same shape as `felica`'s `keys.jsonl`:
 //!
 //! ```json
 //! {"system_code":"0003","node":"FFFF","algo":"DES","version":"0003","idm":null,"key":"00112233..."}
@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-use felica_rs::felica_standard::generate_service_keys_des;
+use felica::felica_standard::generate_service_keys_des;
 use serde::Deserialize;
 
 use crate::error::ProtocolError;

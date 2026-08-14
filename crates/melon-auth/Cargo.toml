@@ -10,9 +10,9 @@ name = "melon_auth"
 path = "src/lib.rs"
 
 [dependencies]
-# rusb-free: the workspace felica-rs dep sets default-features = false, so this
+# rusb-free: the workspace felica dep sets default-features = false, so this
 # links only the felica_standard crypto/protocol + emulator, never the USB stack.
-felica-rs.workspace = true
+felica.workspace = true
 axum.workspace = true
 tokio.workspace = true
 flume.workspace = true

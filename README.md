@@ -32,13 +32,13 @@ Rust ワークスペースのクレート:
 |---|---|
 | `melon-core` | 純粋ドメイン(金額 `Yen`、`Idi`/`Idm`、不変台帳、6ヶ月失効ロジック)。I/O なし。 |
 | `melon-db` | PostgreSQL 永続化(sqlx)。マイグレーション、口座・金銭操作、二重支払い防止。 |
-| `melon-auth` | オンライン FeliCa 暗号オラクル(`felica-rs` を rusb なしで取り込み)。鍵保持・相互認証セッション。 |
+| `melon-auth` | オンライン FeliCa 暗号オラクル(`felica` を rusb なしで取り込み)。鍵保持・相互認証セッション。 |
 | `melon-server` | axum HTTP JSON API。上記を統合し、失効スイープを常駐実行。 |
 | `melon-terminal` | PaSoRi 端末(lib + bin)。キオスク / CLI の 2 モード。 |
 
 ## 技術スタック
 
-- **Rust**(edition 2024 / toolchain 1.97)、axum、tokio、sqlx + **PostgreSQL**、[jiff](https://docs.rs/jiff)(JST 失効境界)、reqwest、tiny_http(キオスク)、argon2、[felica-rs](https://github.com/soltia48/felica-rs)(FeliCa 暗号・USB)。
+- **Rust**(edition 2024 / toolchain 1.97)、axum、tokio、sqlx + **PostgreSQL**、[jiff](https://docs.rs/jiff)(JST 失効境界)、reqwest、tiny_http(キオスク)、argon2、[felica](https://github.com/soltia48/felica)(FeliCa 暗号・USB)。
 - **フロントエンド**: Next.js 15 / React 19 / TypeScript。
 - **デプロイ**: Docker / Docker Compose / Cloudflare Tunnel(cloudflared)。
 

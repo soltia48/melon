@@ -7,9 +7,9 @@
 //! response on the following request.
 //!
 //! The heavy lifting (challenge math, MACs, secure framing) is reused verbatim
-//! from the `felica-rs` library: a per-session worker thread drives
-//! [`felica_rs::felica_standard::FelicaStandard`] through a custom relay
-//! [`felica_rs::felica_standard::FelicaDriver`] whose `transceive` bounces each frame
+//! from the `felica` library: a per-session worker thread drives
+//! [`felica::felica_standard::FelicaStandard`] through a custom relay
+//! [`felica::felica_standard::FelicaDriver`] whose `transceive` bounces each frame
 //! to the HTTP client and blocks for the reply. See [`relay_driver`] and
 //! [`session`].
 

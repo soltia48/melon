@@ -1,4 +1,4 @@
-//! End-to-end tests driving the full relay against `felica-rs`'s in-memory card
+//! End-to-end tests driving the full relay against `felica`'s in-memory card
 //! emulator. The test plays the role of the reader-owning *client*: it forwards
 //! each command frame the server emits to the emulated card and feeds the card's
 //! response back on the next request.
@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use felica_rs::felica_standard::{
+use felica::felica_standard::{
     EmulatedService, EmulatedSystem, FelicaStandardEmulator, ServiceCode,
 };
 
